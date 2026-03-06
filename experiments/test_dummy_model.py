@@ -21,6 +21,7 @@ def build_dummy_model(device: str) -> LLaDAModelLM:
         alibi=False,
         max_sequence_length=512,
         vocab_size=130000,
+        embedding_size=130048,
     )
     model = LLaDAModelLM(config=config, init_params=True)
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
