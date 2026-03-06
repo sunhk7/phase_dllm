@@ -3,3 +3,4 @@ torch==2.5.1
 transformers==4.45.2
 seaborn==0.13.2
 matplotlib==3.8.4
+datasets

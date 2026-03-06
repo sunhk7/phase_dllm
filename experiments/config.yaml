@@ -21,8 +21,15 @@ dummy:
 
 real:
   enabled: true
-  # generate.py 默认会写出此文件名
-  source_npy: llada_8b_attention_dynamics.npy
-  output_npy: results/llada_8b_attention_dynamics.npy
-  output_png: results/llada_8b_attention_dynamics.png
-  heatmap_title: LLaDA-8B Attention Dynamics Heatmap
+  dataset: gsm8k
+  split: test
+  max_samples: 100
+  batch_size: 1
+  steps: 128
+  gen_length: 128
+  block_length: 32
+  temperature: 0.0
+  cfg_scale: 0.0
+  remasking: low_confidence
+  device: auto
+  heatmap_title_prefix: GSM8K Attention Dynamics

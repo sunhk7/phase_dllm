@@ -1,8 +1,12 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
+import argparse
+import json
+import os
 
 from transformers import AutoTokenizer, AutoModel
+from datasets import load_dataset
 from model.modeling_llada import LLaDAModelLM
 
 
@@ -108,6 +112,8 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
                 x_ = torch.cat([x, un_x], dim=0)
                 if attention_mask is not None:
                     attention_mask_ = torch.cat([attention_mask, attention_mask], dim=0)
+                else:
+                    attention_mask_ = None
                 logits = model(x_, attention_mask=attention_mask_).logits
                 logits, un_logits = torch.chunk(logits, 2, dim=0)
                 logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
@@ -164,10 +170,36 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
 
 
 def main():
-    device = 'cuda'
+    parser = argparse.ArgumentParser(description="Run LLaDA generation and collect attention dynamics")
+    parser.add_argument("--model-id", type=str, default="GSAI-ML/LLaDA-8B-Instruct")
+    parser.add_argument("--dataset", type=str, default="gsm8k", choices=["gsm8k"])
+    parser.add_argument("--split", type=str, default="test")
+    parser.add_argument("--max-samples", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--steps", type=int, default=128)
+    parser.add_argument("--gen-length", type=int, default=128)
+    parser.add_argument("--block-length", type=int, default=32)
+    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--cfg-scale", type=float, default=0.0)
+    parser.add_argument("--remasking", type=str, default="low_confidence", choices=["low_confidence", "random"])
+    parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
+    args = parser.parse_args()
 
-    model = LLaDAModelLM.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = args.device
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is not available.")
+
+    model_dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    model = LLaDAModelLM.from_pretrained(
+        args.model_id,
+        trust_remote_code=True,
+        torch_dtype=model_dtype,
+    ).to(device).eval()
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
     # However, the sampling code implementation is simpler with left-padding.
@@ -177,28 +209,81 @@ def main():
     # If the padding ID equals the mask ID, you need to modify our generate function to achieve correct inference.
     assert tokenizer.pad_token_id != 126336
 
-    prompts = [ "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?",
-             "Joy can read 8 pages of a book in 20 minutes. How many hours will it take her to read 120 pages?",
-             "Randy has 60 mango trees on his farm. He also has 5 less than half as many coconut trees as mango trees. How many trees does Randy have in all on his farm?"]
+    os.makedirs(args.results_dir, exist_ok=True)
+    dataset_results_dir = os.path.join(args.results_dir, args.dataset)
+    os.makedirs(dataset_results_dir, exist_ok=True)
 
-    # Add special tokens for the Instruct model. The Base model does not require the following two lines.
-    messages = [{"role": "user", "content": prompt} for prompt in prompts]
-    prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
+    # Legacy manual prompts path kept for reference (may be removed later).
+    # prompts = [ "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?",
+    #          "Joy can read 8 pages of a book in 20 minutes. How many hours will it take her to read 120 pages?",
+    #          "Randy has 60 mango trees on his farm. He also has 5 less than half as many coconut trees as mango trees. How many trees does Randy have in all on his farm?"]
+    # messages = [{"role": "user", "content": prompt} for prompt in prompts]
+    # prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
+    # encoded_outputs = tokenizer(prompts, add_special_tokens=False, padding=True, return_tensors="pt")
+    # input_ids = encoded_outputs['input_ids'].to(device)
+    # attention_mask = encoded_outputs['attention_mask'].to(device)
+    # out = generate(model, input_ids, attention_mask, steps=128, gen_length=128, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
+    # output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
 
-    encoded_outputs = tokenizer(
-        prompts,
-        add_special_tokens=False,
-        padding=True,
-        return_tensors="pt"
-    )
-    input_ids = encoded_outputs['input_ids'].to(device)
-    attention_mask = encoded_outputs['attention_mask'].to(device)
+    if args.dataset != "gsm8k":
+        raise NotImplementedError(args.dataset)
 
-    out = generate(model, input_ids, attention_mask, steps=128, gen_length=128, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
-    output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
-    for o in output:
-        print(o)
-        print('-' * 50)
+    dataset = load_dataset("gsm8k", "main", split=args.split)
+    total_samples = min(len(dataset), args.max_samples)
+    records = []
+
+    for start in range(0, total_samples, args.batch_size):
+        end = min(start + args.batch_size, total_samples)
+        batch = dataset[start:end]
+        questions = batch["question"]
+        answers = batch["answer"]
+
+        messages = [{"role": "user", "content": f"Solve the math problem.\n\nQuestion: {q}"} for q in questions]
+        prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
+
+        encoded_outputs = tokenizer(
+            prompts,
+            add_special_tokens=False,
+            padding=True,
+            return_tensors="pt",
+        )
+        input_ids = encoded_outputs["input_ids"].to(device)
+        attention_mask = encoded_outputs["attention_mask"].to(device)
+
+        dynamics_path = os.path.join(dataset_results_dir, f"gsm8k_dynamics_{start:05d}_{end - 1:05d}.npy")
+        out = generate(
+            model,
+            input_ids,
+            attention_mask=attention_mask,
+            steps=args.steps,
+            gen_length=args.gen_length,
+            block_length=args.block_length,
+            temperature=args.temperature,
+            cfg_scale=args.cfg_scale,
+            remasking=args.remasking,
+            save_dynamics_path=dynamics_path,
+        )
+        output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
+
+        for local_idx, (question, answer, prediction) in enumerate(zip(questions, answers, output_text)):
+            sample_idx = start + local_idx
+            records.append(
+                {
+                    "index": sample_idx,
+                    "question": question,
+                    "answer": answer,
+                    "prediction": prediction,
+                    "dynamics_path": dynamics_path,
+                }
+            )
+            print(f"[{sample_idx}] {prediction}")
+            print("-" * 50)
+
+    output_jsonl = os.path.join(dataset_results_dir, "gsm8k_outputs.jsonl")
+    with open(output_jsonl, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(f"Saved {len(records)} samples to {output_jsonl}")
 
 if __name__ == '__main__':
     main()
