@@ -40,4 +40,4 @@
 3. 颜色映射必须使用 `cmap='coolwarm'`，低比例显示为冷色调（局部搜索），高比例显示为暖色调（全局搜索）。添加 Colorbar 和学术标题，保存为高清 PNG。
 
 【输出要求】
-请分别给出 `test_dummy_model.py` 的完整代码、`modeling_llada.py` 中需要插入的核心逻辑片段、`generate.py` 的数据收集片段，以及 `plot_dynamics.py` 的完整代码。
+请分别给出 `test_dummy_model.py` 的完整代码、`modeling_llada.py` 中需要插入的核心逻辑片段、`generate.py` 的数据收集片段，以及 `plot_dynamics.py` 的完整代码。同时按照git提交规范，给出每个文件的 commit message。

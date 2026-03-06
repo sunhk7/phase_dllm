@@ -1,0 +1,28 @@
+experiment:
+  name: llada_spatiotemporal_dynamics
+  seed: 42
+
+paths:
+  results_dir: results
+
+model:
+  model_id: GSAI-ML/LLaDA-8B-Instruct
+  trust_remote_code: true
+
+dummy:
+  enabled: true
+  tokenizer: GSAI-ML/LLaDA-8B-Instruct
+  steps: 10
+  gen_length: 32
+  block_length: 16
+  device: auto
+  output_npy: results/dummy_dynamics.npy
+  output_png: results/dummy_dynamics.png
+
+real:
+  enabled: true
+  # generate.py 默认会写出此文件名
+  source_npy: llada_8b_attention_dynamics.npy
+  output_npy: results/llada_8b_attention_dynamics.npy
+  output_png: results/llada_8b_attention_dynamics.png
+  heatmap_title: LLaDA-8B Attention Dynamics Heatmap

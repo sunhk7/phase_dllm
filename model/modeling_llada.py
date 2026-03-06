@@ -26,10 +26,14 @@ import torch.backends.cuda
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import einsum
-from transformers import PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.models.auto import AutoModel
 from transformers.cache_utils import Cache
+
+try:
+    from transformers import PreTrainedModel
+except ImportError:
+    from transformers.modeling_utils import PreTrainedModel
 
 from .configuration_llada import (
     LLaDAConfig,
@@ -634,7 +638,9 @@ class LLaDABlock(nn.Module):
         Computes scaled dot product attention on query, key and value tensors, using an optional
         attention mask if passed, and applying dropout if a probability greater than 0.0 is specified.
         """
-        if self.flash_attn_func is not None and attn_mask is None:
+        track_global_ratio = hasattr(self, "global_ratio_tracker")
+
+        if self.flash_attn_func is not None and attn_mask is None and not track_global_ratio:
             r = self.flash_attn_func(
                 q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), dropout_p=dropout_p, causal=False
             )
@@ -648,6 +654,29 @@ class LLaDABlock(nn.Module):
                 assert num_q_heads % num_kv_heads == 0
                 k = k.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
                 v = v.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
+
+            if track_global_ratio:
+                # Track how much attention mass falls outside a local window W=64 (diagonal +/- 32).
+                attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(q.size(-1))
+                if attn_mask is not None:
+                    attn_scores = attn_scores + attn_mask
+                attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
+
+                local_half_window = 32
+                query_len, key_len = attn_weights.shape[-2], attn_weights.shape[-1]
+                local_window_mask = torch.ones(
+                    (query_len, key_len), device=attn_weights.device, dtype=attn_weights.dtype
+                )
+                local_window_mask = torch.triu(local_window_mask, diagonal=-local_half_window)
+                local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
+                global_window_mask = 1.0 - local_window_mask
+
+                global_ratio = (attn_weights * global_window_mask.view(1, 1, query_len, key_len)).sum(dim=-1).mean()
+                self.global_ratio_tracker.append(global_ratio.detach())
+
+                if dropout_p > 0.0:
+                    attn_weights = F.dropout(attn_weights, p=dropout_p, training=self.training)
+                return torch.matmul(attn_weights.to(dtype=v.dtype), v)
 
             # Modify: MDM set causal to False.
             return F.scaled_dot_product_attention(

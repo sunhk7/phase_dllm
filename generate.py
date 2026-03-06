@@ -5,6 +5,23 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel
 from model.modeling_llada import LLaDAModelLM
 
+
+def _iter_attention_modules(model):
+    if not hasattr(model, "model") or not hasattr(model.model, "transformer"):
+        return []
+
+    transformer = model.model.transformer
+    if hasattr(transformer, "blocks"):
+        return list(transformer.blocks)
+
+    if hasattr(transformer, "block_groups"):
+        modules = []
+        for group in transformer.block_groups:
+            modules.extend(list(group))
+        return modules
+
+    return []
+
 def add_gumbel_noise(logits, temperature):
     '''
     The Gumbel max is a method for sampling categorical distributions.
@@ -42,7 +59,9 @@ def get_num_transfer_tokens(mask_index, steps):
 
 @ torch.no_grad()
 def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, block_length=128, temperature=0.,
-             cfg_scale=0., remasking='low_confidence', mask_id=126336, logits_eos_inf=False, confidence_eos_eot_inf=False):
+             cfg_scale=0., remasking='low_confidence', mask_id=126336, logits_eos_inf=False,
+             confidence_eos_eot_inf=False, collect_attention_dynamics=True,
+             save_dynamics_path='llada_8b_attention_dynamics.npy'):
     '''
     Args:
         model: Mask predictor.
@@ -56,6 +75,8 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
         mask_id: The toke id of [MASK] is 126336.
         logits_eos_inf: Whether to set the logits of EOS token to -inf. See Appendix B.4 of LLaDA for details
         confidence_eos_eot_inf: Whether to set the confidence of EOS and EoT token to -inf. See Appendix B.4 of LLaDA for details
+        collect_attention_dynamics: Whether to collect per-layer global attention ratios each diffusion step.
+        save_dynamics_path: Path to save attention dynamics matrix (.npy). Set to None to disable saving.
     '''
     x = torch.full((prompt.shape[0], prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
     x[:, :prompt.shape[1]] = prompt.clone()
@@ -69,12 +90,17 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
     num_blocks = gen_length // block_length
 
     assert steps % num_blocks == 0
-    steps = steps // num_blocks
+    steps_per_block = steps // num_blocks
+
+    attention_modules = _iter_attention_modules(model) if collect_attention_dynamics else []
+    attention_dynamics = [] if attention_modules else None
+    for attention_module in attention_modules:
+        attention_module.global_ratio_tracker = []
 
     for num_block in range(num_blocks):
         block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
-        num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
-        for i in range(steps):
+        num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps_per_block)
+        for i in range(steps_per_block):
             mask_index = (x == mask_id)
             if cfg_scale > 0.:
                 un_x = x.clone()
@@ -116,6 +142,23 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
                 transfer_index[j, select_index] = True
             x[transfer_index] = x0[transfer_index]
+
+            if attention_dynamics is not None:
+                step_ratio = []
+                for attention_module in attention_modules:
+                    if hasattr(attention_module, "global_ratio_tracker") and attention_module.global_ratio_tracker:
+                        value = attention_module.global_ratio_tracker[-1]
+                        if isinstance(value, torch.Tensor):
+                            value = value.float().cpu().item()
+                        else:
+                            value = float(value)
+                    else:
+                        value = float("nan")
+                    step_ratio.append(value)
+                attention_dynamics.append(step_ratio)
+
+    if attention_dynamics is not None and save_dynamics_path:
+        np.save(save_dynamics_path, np.asarray(attention_dynamics, dtype=np.float32))
 
     return x
 
