@@ -48,3 +48,22 @@ prompt:
   remasking: low_confidence
   device: auto
   heatmap_title_prefix: Prompt Attention Dynamics
+
+longbench:
+  enabled: true
+  datasets:
+    - narrativeqa
+    - hotpotqa
+    - qasper
+    - gov_report
+  samples_per_dataset: 5
+  batch_size: 1
+  steps: 128
+  gen_length: 512
+  block_length: 32
+  temperature: 0.0
+  cfg_scale: 0.0
+  local_half_window: 64
+  remasking: low_confidence
+  device: auto
+  heatmap_title_prefix: LongBench Attention Dynamics

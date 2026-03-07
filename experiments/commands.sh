@@ -71,6 +71,22 @@ emit('PROMPT_CFG_SCALE', cfg['prompt']['cfg_scale'])
 emit('PROMPT_REMASKING', cfg['prompt']['remasking'])
 emit('PROMPT_DEVICE', cfg['prompt']['device'])
 emit('PROMPT_TITLE_PREFIX', cfg['prompt']['heatmap_title_prefix'])
+
+# longbench
+emit('LONGBENCH_ENABLED', cfg.get('longbench', {}).get('enabled', False))
+if 'longbench' in cfg:
+    emit('LONGBENCH_DATASETS', ','.join(cfg['longbench']['datasets']))
+    emit('LONGBENCH_SAMPLES_PER_DATASET', cfg['longbench']['samples_per_dataset'])
+    emit('LONGBENCH_BATCH_SIZE', cfg['longbench']['batch_size'])
+    emit('LONGBENCH_STEPS', cfg['longbench']['steps'])
+    emit('LONGBENCH_GEN_LENGTH', cfg['longbench']['gen_length'])
+    emit('LONGBENCH_BLOCK_LENGTH', cfg['longbench']['block_length'])
+    emit('LONGBENCH_LOCAL_HALF_WINDOW', cfg.get('longbench', {}).get('local_half_window', 64))
+    emit('LONGBENCH_TEMPERATURE', cfg['longbench']['temperature'])
+    emit('LONGBENCH_CFG_SCALE', cfg['longbench']['cfg_scale'])
+    emit('LONGBENCH_REMASKING', cfg['longbench']['remasking'])
+    emit('LONGBENCH_DEVICE', cfg['longbench']['device'])
+    emit('LONGBENCH_TITLE_PREFIX', cfg['longbench']['heatmap_title_prefix'])
 PY
 )"
 
@@ -186,6 +202,49 @@ run_prompt() {
   fi
 }
 
+run_longbench() {
+  if [ "$LONGBENCH_ENABLED" != "True" ] && [ "$LONGBENCH_ENABLED" != "true" ]; then
+    echo "[SKIP] longbench.enabled=false"
+    return
+  fi
+
+  echo "[RUN] LongBench generation chain"
+  python3 generate_longbench.py \
+    --model-id "$MODEL_ID" \
+    --datasets "$LONGBENCH_DATASETS" \
+    --samples-per-dataset "$LONGBENCH_SAMPLES_PER_DATASET" \
+    --batch-size "$LONGBENCH_BATCH_SIZE" \
+    --steps "$LONGBENCH_STEPS" \
+    --gen-length "$LONGBENCH_GEN_LENGTH" \
+    --block-length "$LONGBENCH_BLOCK_LENGTH" \
+    --local-half-window "$LONGBENCH_LOCAL_HALF_WINDOW" \
+    --temperature "$LONGBENCH_TEMPERATURE" \
+    --cfg-scale "$LONGBENCH_CFG_SCALE" \
+    --remasking "$LONGBENCH_REMASKING" \
+    --results-dir "$RESULTS_DIR" \
+    --device "$LONGBENCH_DEVICE"
+
+  LONGBENCH_RESULTS_DIR="$RESULTS_DIR/longbench"
+  mkdir -p "$LONGBENCH_RESULTS_DIR"
+  count=0
+  for npy in "$LONGBENCH_RESULTS_DIR"/*_dynamics_*.npy; do
+    if [ ! -f "$npy" ]; then
+      continue
+    fi
+    png="${npy%.npy}.png"
+    title="$LONGBENCH_TITLE_PREFIX $(basename "$npy" .npy)"
+    python3 plot_dynamics.py "$npy" --output "$png" --title "$title"
+    count=$((count + 1))
+  done
+
+  if [ "$count" -eq 0 ]; then
+    echo "[WARN] No LongBench dynamics npy files found in $LONGBENCH_RESULTS_DIR"
+  else
+    echo "[DONE] Plotted $count heatmaps from LongBench dynamics files"
+  fi
+}
+
+
 case "$MODE" in
   dummy)
     run_dummy
@@ -196,13 +255,17 @@ case "$MODE" in
   prompt)
     run_prompt
     ;;
+  longbench)
+    run_longbench
+    ;;
   all)
     run_dummy
     run_real
     run_prompt
+    run_longbench
     ;;
   *)
-    echo "Usage: bash commands.sh [dummy|real|all] [config_path]"
+    echo "Usage: bash commands.sh [dummy|real|prompt|longbench|all] [config_path]"
     exit 1
     ;;
 esac
