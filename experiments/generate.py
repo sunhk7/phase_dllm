@@ -101,6 +101,7 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
     for attention_module in attention_modules:
         attention_module.global_ratio_tracker = []
         attention_module.local_half_window = local_half_window
+        attention_module.context_length = prompt.shape[1]
 
     for num_block in range(num_blocks):
         block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)

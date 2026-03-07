@@ -7,9 +7,22 @@ import os
 import random
 
 from transformers import AutoTokenizer, AutoModel
-from datasets import load_dataset
 from model.modeling_llada import LLaDAModelLM
 from generate import generate
+
+import zipfile
+from huggingface_hub import hf_hub_download
+
+def download_and_extract_longbench(results_dir):
+    data_dir = os.path.join(results_dir, "longbench_data")
+    extract_dir = os.path.join(data_dir, "data")
+    if not os.path.exists(extract_dir):
+        print("Downloading LongBench data.zip...")
+        os.makedirs(data_dir, exist_ok=True)
+        zip_path = hf_hub_download(repo_id="THUDM/LongBench", filename="data.zip", repo_type="dataset")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(data_dir)
+    return extract_dir
 
 def main():
     parser = argparse.ArgumentParser(description="Run LLaDA generation for LongBench and collect attention dynamics")
@@ -40,7 +53,8 @@ def main():
         args.model_id,
         trust_remote_code=True,
         torch_dtype=model_dtype,
-    ).to(device).eval()
+        device_map="auto" if device == "cuda" else None,
+    ).eval()
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 
     if tokenizer.padding_side != 'left':
@@ -52,16 +66,23 @@ def main():
     longbench_results_dir = os.path.join(args.results_dir, "longbench")
     os.makedirs(longbench_results_dir, exist_ok=True)
 
+    data_dir = download_and_extract_longbench(args.results_dir)
+
     target_datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
     records = []
 
     for dataset_name in target_datasets:
         print(f"Loading LongBench dataset: {dataset_name}")
-        try:
-            dataset = load_dataset("THUDM/LongBench", dataset_name, split="test")
-        except Exception as e:
-            print(f"Error loading {dataset_name}: {e}")
+        jsonl_path = os.path.join(data_dir, f"{dataset_name}.jsonl")
+        
+        if not os.path.exists(jsonl_path):
+            print(f"Error: {jsonl_path} not found.")
             continue
+            
+        dataset = []
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                dataset.append(json.loads(line))
 
         total_samples = len(dataset)
         sample_indices = random.sample(range(total_samples), min(args.samples_per_dataset, total_samples))
@@ -69,6 +90,14 @@ def main():
         for local_idx in sample_indices:
             row = dataset[local_idx]
             context = row.get("context", "")
+            
+            # Strong Truncation to 12000 chars (approx 3000 tokens)
+            # Without tensor parallelism, a single GPU layer must process the entire sequence's attention matrix.
+            # To avoid the 89GB OOM crash per layer and guarantee stability, we keep this limit.
+            max_context_chars = 12000
+            if len(context) > max_context_chars:
+                context = context[:max_context_chars] + "... (truncated due to 24G VRAM limits)"
+
             question = row.get("input", "")
             answers = row.get("answers", [])
 
@@ -81,26 +110,34 @@ def main():
                 padding=True,
                 return_tensors="pt",
             )
-            input_ids = encoded_outputs["input_ids"].to(device)
-            attention_mask = encoded_outputs["attention_mask"].to(device)
+            # When using device_map="auto", model.device usually points to the device of the first layer
+            # which is where embeddings are located
+            first_device = model.device
+            input_ids = encoded_outputs["input_ids"].to(first_device)
+            attention_mask = encoded_outputs["attention_mask"].to(first_device)
 
             dynamics_path = os.path.join(longbench_results_dir, f"{dataset_name}_dynamics_{local_idx}.npy")
 
             print(f"Generating for {dataset_name} index {local_idx}...")
-            out = generate(
-                model,
-                input_ids,
-                attention_mask=attention_mask,
-                steps=args.steps,
-                gen_length=args.gen_length,
-                block_length=args.block_length,
-                temperature=args.temperature,
-                cfg_scale=args.cfg_scale,
-                remasking=args.remasking,
-                save_dynamics_path=dynamics_path,
-                local_half_window=args.local_half_window,
-            )
             
+            with torch.no_grad():
+                out = generate(
+                    model,
+                    input_ids,
+                    attention_mask=attention_mask,
+                    steps=args.steps,
+                    gen_length=args.gen_length,
+                    block_length=args.block_length,
+                    temperature=args.temperature,
+                    cfg_scale=args.cfg_scale,
+                    remasking=args.remasking,
+                    save_dynamics_path=dynamics_path,
+                    local_half_window=args.local_half_window,
+                )
+            
+            # Move generate outputs to CPU immediately to free VRAM for the next question
+            out = out.cpu()
+            torch.cuda.empty_cache()  # Force reclaim of the 10GB+ layer intermediates
             output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
 
             record = {

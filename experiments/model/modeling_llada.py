@@ -671,11 +671,23 @@ class LLaDABlock(nn.Module):
                 local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
                 global_window_mask = 1.0 - local_window_mask
 
-                global_ratio = (attn_weights * global_window_mask.view(1, 1, query_len, key_len)).sum(dim=-1).mean()
+                context_length = getattr(self, "context_length", None)
+                if context_length is not None and context_length < query_len:
+                    # Slice queries to focus only on generated tokens (VRAM optimization & accuracy)
+                    sliced_attn_weights = attn_weights[:, :, context_length:, :]
+                    sliced_global_mask = global_window_mask.view(1, 1, query_len, key_len)[:, :, context_length:, :]
+                    global_ratio = (sliced_attn_weights * sliced_global_mask).sum(dim=-1).mean()
+                else:
+                    global_ratio = (attn_weights * global_window_mask.view(1, 1, query_len, key_len)).sum(dim=-1).mean()
+                    
                 self.global_ratio_tracker.append(global_ratio.detach())
 
                 if dropout_p > 0.0:
                     attn_weights = F.dropout(attn_weights, p=dropout_p, training=self.training)
+                
+                # Cleanup huge local matrix before v mul
+                del sliced_attn_weights, sliced_global_mask, local_window_mask, global_window_mask
+                
                 return torch.matmul(attn_weights.to(dtype=v.dtype), v)
 
             # Modify: MDM set causal to False.
