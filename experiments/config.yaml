@@ -24,11 +24,11 @@ real:
   enabled: true
   dataset: gsm8k
   split: test
-  max_samples: 100
+  max_samples: 10
   batch_size: 1
   steps: 128
   gen_length: 128
-  block_length: 32
+  block_length: 128
   temperature: 0.0
   cfg_scale: 0.0
   local_half_window: 32
@@ -41,7 +41,7 @@ prompt:
   batch_size: 1
   steps: 128
   gen_length: 128
-  block_length: 32
+  block_length: 128
   temperature: 0.0
   cfg_scale: 0.0
   local_half_window: 32
@@ -60,7 +60,7 @@ longbench:
   batch_size: 1
   steps: 128
   gen_length: 512
-  block_length: 32
+  block_length: 512
   temperature: 0.0
   cfg_scale: 0.0
   local_half_window: 64
@@ -73,9 +73,9 @@ wikitext:
   samples: 5
   batch_size: 1
   prompt_length: 256
-  steps: 144
+  steps: 128
   gen_length: 768
-  block_length: 32
+  block_length: 768
   temperature: 0.0
   cfg_scale: 0.0
   local_half_window: 32
