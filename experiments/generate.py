@@ -213,17 +213,8 @@ def main():
     dataset_results_dir = os.path.join(args.results_dir, args.dataset)
     os.makedirs(dataset_results_dir, exist_ok=True)
 
-    # Legacy manual prompts path kept for reference (may be removed later).
-    # prompts = [ "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?",
-    #          "Joy can read 8 pages of a book in 20 minutes. How many hours will it take her to read 120 pages?",
-    #          "Randy has 60 mango trees on his farm. He also has 5 less than half as many coconut trees as mango trees. How many trees does Randy have in all on his farm?"]
-    # messages = [{"role": "user", "content": prompt} for prompt in prompts]
-    # prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
-    # encoded_outputs = tokenizer(prompts, add_special_tokens=False, padding=True, return_tensors="pt")
-    # input_ids = encoded_outputs['input_ids'].to(device)
-    # attention_mask = encoded_outputs['attention_mask'].to(device)
-    # out = generate(model, input_ids, attention_mask, steps=128, gen_length=128, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
-    # output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
+
+
 
     if args.dataset != "gsm8k":
         raise NotImplementedError(args.dataset)

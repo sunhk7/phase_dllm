@@ -33,3 +33,15 @@ real:
   remasking: low_confidence
   device: auto
   heatmap_title_prefix: GSM8K Attention Dynamics
+
+prompt:
+  enabled: true
+  batch_size: 1
+  steps: 128
+  gen_length: 128
+  block_length: 32
+  temperature: 0.0
+  cfg_scale: 0.0
+  remasking: low_confidence
+  device: auto
+  heatmap_title_prefix: Prompt Attention Dynamics

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODE="${1:-all}"        # dummy | real | all
+MODE="${1:-all}"        # dummy | real | prompt | all
 CONFIG_PATH="${2:-config.yaml}"
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -56,6 +56,18 @@ emit('REAL_CFG_SCALE', cfg['real']['cfg_scale'])
 emit('REAL_REMASKING', cfg['real']['remasking'])
 emit('REAL_DEVICE', cfg['real']['device'])
 emit('REAL_TITLE_PREFIX', cfg['real']['heatmap_title_prefix'])
+
+# prompt
+emit('PROMPT_ENABLED', cfg['prompt']['enabled'])
+emit('PROMPT_BATCH_SIZE', cfg['prompt']['batch_size'])
+emit('PROMPT_STEPS', cfg['prompt']['steps'])
+emit('PROMPT_GEN_LENGTH', cfg['prompt']['gen_length'])
+emit('PROMPT_BLOCK_LENGTH', cfg['prompt']['block_length'])
+emit('PROMPT_TEMPERATURE', cfg['prompt']['temperature'])
+emit('PROMPT_CFG_SCALE', cfg['prompt']['cfg_scale'])
+emit('PROMPT_REMASKING', cfg['prompt']['remasking'])
+emit('PROMPT_DEVICE', cfg['prompt']['device'])
+emit('PROMPT_TITLE_PREFIX', cfg['prompt']['heatmap_title_prefix'])
 PY
 )"
 
@@ -129,6 +141,45 @@ run_real() {
   fi
 }
 
+run_prompt() {
+  if [ "$PROMPT_ENABLED" != "True" ] && [ "$PROMPT_ENABLED" != "true" ]; then
+    echo "[SKIP] prompt.enabled=false"
+    return
+  fi
+
+  echo "[RUN] Prompt generation chain"
+  python3 generate_prompt.py \
+    --model-id "$MODEL_ID" \
+    --batch-size "$PROMPT_BATCH_SIZE" \
+    --steps "$PROMPT_STEPS" \
+    --gen-length "$PROMPT_GEN_LENGTH" \
+    --block-length "$PROMPT_BLOCK_LENGTH" \
+    --temperature "$PROMPT_TEMPERATURE" \
+    --cfg-scale "$PROMPT_CFG_SCALE" \
+    --remasking "$PROMPT_REMASKING" \
+    --results-dir "$RESULTS_DIR" \
+    --device "$PROMPT_DEVICE"
+
+  PROMPT_RESULTS_DIR="$RESULTS_DIR/prompt"
+  mkdir -p "$PROMPT_RESULTS_DIR"
+  count=0
+  for npy in "$PROMPT_RESULTS_DIR"/prompt_dynamics_*.npy; do
+    if [ ! -f "$npy" ]; then
+      continue
+    fi
+    png="${npy%.npy}.png"
+    title="$PROMPT_TITLE_PREFIX $(basename "$npy" .npy)"
+    python3 plot_dynamics.py "$npy" --output "$png" --title "$title"
+    count=$((count + 1))
+  done
+
+  if [ "$count" -eq 0 ]; then
+    echo "[WARN] No Prompt dynamics npy files found in $PROMPT_RESULTS_DIR"
+  else
+    echo "[DONE] Plotted $count heatmaps from Prompt dynamics files"
+  fi
+}
+
 case "$MODE" in
   dummy)
     run_dummy
@@ -136,9 +187,13 @@ case "$MODE" in
   real)
     run_real
     ;;
+  prompt)
+    run_prompt
+    ;;
   all)
     run_dummy
     run_real
+    run_prompt
     ;;
   *)
     echo "Usage: bash commands.sh [dummy|real|all] [config_path]"
