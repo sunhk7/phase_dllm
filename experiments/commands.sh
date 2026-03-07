@@ -87,6 +87,22 @@ if 'longbench' in cfg:
     emit('LONGBENCH_REMASKING', cfg['longbench']['remasking'])
     emit('LONGBENCH_DEVICE', cfg['longbench']['device'])
     emit('LONGBENCH_TITLE_PREFIX', cfg['longbench']['heatmap_title_prefix'])
+
+# wikitext
+emit('WIKITEXT_ENABLED', cfg.get('wikitext', {}).get('enabled', False))
+if 'wikitext' in cfg:
+    emit('WIKITEXT_SAMPLES', cfg['wikitext']['samples'])
+    emit('WIKITEXT_BATCH_SIZE', cfg['wikitext']['batch_size'])
+    emit('WIKITEXT_PROMPT_LENGTH', cfg['wikitext']['prompt_length'])
+    emit('WIKITEXT_STEPS', cfg['wikitext']['steps'])
+    emit('WIKITEXT_GEN_LENGTH', cfg['wikitext']['gen_length'])
+    emit('WIKITEXT_BLOCK_LENGTH', cfg['wikitext']['block_length'])
+    emit('WIKITEXT_LOCAL_HALF_WINDOW', cfg.get('wikitext', {}).get('local_half_window', 64))
+    emit('WIKITEXT_TEMPERATURE', cfg['wikitext']['temperature'])
+    emit('WIKITEXT_CFG_SCALE', cfg['wikitext']['cfg_scale'])
+    emit('WIKITEXT_REMASKING', cfg['wikitext']['remasking'])
+    emit('WIKITEXT_DEVICE', cfg['wikitext']['device'])
+    emit('WIKITEXT_TITLE_PREFIX', cfg['wikitext']['heatmap_title_prefix'])
 PY
 )"
 
@@ -244,6 +260,48 @@ run_longbench() {
   fi
 }
 
+run_wikitext() {
+  if [ "$WIKITEXT_ENABLED" != "True" ] && [ "$WIKITEXT_ENABLED" != "true" ]; then
+    echo "[SKIP] wikitext.enabled=false"
+    return
+  fi
+
+  echo "[RUN] WikiText generation chain"
+  python3 generate_wikitext.py \
+    --model-id "$MODEL_ID" \
+    --samples "$WIKITEXT_SAMPLES" \
+    --batch-size "$WIKITEXT_BATCH_SIZE" \
+    --prompt-length "$WIKITEXT_PROMPT_LENGTH" \
+    --steps "$WIKITEXT_STEPS" \
+    --gen-length "$WIKITEXT_GEN_LENGTH" \
+    --block-length "$WIKITEXT_BLOCK_LENGTH" \
+    --local-half-window "$WIKITEXT_LOCAL_HALF_WINDOW" \
+    --temperature "$WIKITEXT_TEMPERATURE" \
+    --cfg-scale "$WIKITEXT_CFG_SCALE" \
+    --remasking "$WIKITEXT_REMASKING" \
+    --results-dir "$RESULTS_DIR" \
+    --device "$WIKITEXT_DEVICE"
+
+  WIKITEXT_RESULTS_DIR="$RESULTS_DIR/wikitext"
+  mkdir -p "$WIKITEXT_RESULTS_DIR"
+  count=0
+  for npy in "$WIKITEXT_RESULTS_DIR"/wikitext_dynamics_*.npy; do
+    if [ ! -f "$npy" ]; then
+      continue
+    fi
+    png="${npy%.npy}.png"
+    title="$WIKITEXT_TITLE_PREFIX $(basename "$npy" .npy)"
+    python3 plot_dynamics.py "$npy" --output "$png" --title "$title"
+    count=$((count + 1))
+  done
+
+  if [ "$count" -eq 0 ]; then
+    echo "[WARN] No WikiText dynamics npy files found in $WIKITEXT_RESULTS_DIR"
+  else
+    echo "[DONE] Plotted $count heatmaps from WikiText dynamics files"
+  fi
+}
+
 
 case "$MODE" in
   dummy)
@@ -258,14 +316,18 @@ case "$MODE" in
   longbench)
     run_longbench
     ;;
+  wikitext)
+    run_wikitext
+    ;;
   all)
     run_dummy
     run_real
     run_prompt
     run_longbench
+    run_wikitext
     ;;
   *)
-    echo "Usage: bash commands.sh [dummy|real|prompt|longbench|all] [config_path]"
+    echo "Usage: bash commands.sh [dummy|real|prompt|longbench|wikitext|all] [config_path]"
     exit 1
     ;;
 esac

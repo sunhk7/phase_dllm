@@ -67,3 +67,18 @@ longbench:
   remasking: low_confidence
   device: auto
   heatmap_title_prefix: LongBench Attention Dynamics
+
+wikitext:
+  enabled: true
+  samples: 5
+  batch_size: 1
+  prompt_length: 256
+  steps: 144
+  gen_length: 768
+  block_length: 32
+  temperature: 0.0
+  cfg_scale: 0.0
+  local_half_window: 32
+  remasking: low_confidence
+  device: auto
+  heatmap_title_prefix: WikiText-103 Attention Dynamics
