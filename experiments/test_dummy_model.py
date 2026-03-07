@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--gen-length", type=int, default=32)
     parser.add_argument("--block-length", type=int, default=16)
+    parser.add_argument("--local-half-window", type=int, default=32)
     parser.add_argument("--output", type=str, default="dummy_dynamics.npy")
     parser.add_argument("--plot", type=str, default="dummy_dynamics.png")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
@@ -76,6 +77,7 @@ def main():
         remasking="low_confidence",
         collect_attention_dynamics=True,
         save_dynamics_path=args.output,
+        local_half_window=args.local_half_window,
     )
 
     dynamics = np.load(args.output)

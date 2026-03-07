@@ -15,6 +15,7 @@ dummy:
   steps: 10
   gen_length: 32
   block_length: 16
+  local_half_window: 32
   device: auto
   output_npy: results/dummy_dynamics.npy
   output_png: results/dummy_dynamics.png
@@ -30,6 +31,7 @@ real:
   block_length: 32
   temperature: 0.0
   cfg_scale: 0.0
+  local_half_window: 32
   remasking: low_confidence
   device: auto
   heatmap_title_prefix: GSM8K Attention Dynamics
@@ -42,6 +44,7 @@ prompt:
   block_length: 32
   temperature: 0.0
   cfg_scale: 0.0
+  local_half_window: 32
   remasking: low_confidence
   device: auto
   heatmap_title_prefix: Prompt Attention Dynamics

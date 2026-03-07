@@ -662,7 +662,7 @@ class LLaDABlock(nn.Module):
                     attn_scores = attn_scores + attn_mask
                 attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
 
-                local_half_window = 32
+                local_half_window = getattr(self, "local_half_window", 32)
                 query_len, key_len = attn_weights.shape[-2], attn_weights.shape[-1]
                 local_window_mask = torch.ones(
                     (query_len, key_len), device=attn_weights.device, dtype=attn_weights.dtype

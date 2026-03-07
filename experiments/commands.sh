@@ -38,6 +38,7 @@ emit('DUMMY_TOKENIZER', cfg['dummy']['tokenizer'])
 emit('DUMMY_STEPS', cfg['dummy']['steps'])
 emit('DUMMY_GEN_LENGTH', cfg['dummy']['gen_length'])
 emit('DUMMY_BLOCK_LENGTH', cfg['dummy']['block_length'])
+emit('DUMMY_LOCAL_HALF_WINDOW', cfg.get('dummy', {}).get('local_half_window', 32))
 emit('DUMMY_DEVICE', cfg['dummy']['device'])
 emit('DUMMY_NPY', cfg['dummy']['output_npy'])
 emit('DUMMY_PNG', cfg['dummy']['output_png'])
@@ -51,6 +52,7 @@ emit('REAL_BATCH_SIZE', cfg['real']['batch_size'])
 emit('REAL_STEPS', cfg['real']['steps'])
 emit('REAL_GEN_LENGTH', cfg['real']['gen_length'])
 emit('REAL_BLOCK_LENGTH', cfg['real']['block_length'])
+emit('REAL_LOCAL_HALF_WINDOW', cfg.get('real', {}).get('local_half_window', 32))
 emit('REAL_TEMPERATURE', cfg['real']['temperature'])
 emit('REAL_CFG_SCALE', cfg['real']['cfg_scale'])
 emit('REAL_REMASKING', cfg['real']['remasking'])
@@ -63,6 +65,7 @@ emit('PROMPT_BATCH_SIZE', cfg['prompt']['batch_size'])
 emit('PROMPT_STEPS', cfg['prompt']['steps'])
 emit('PROMPT_GEN_LENGTH', cfg['prompt']['gen_length'])
 emit('PROMPT_BLOCK_LENGTH', cfg['prompt']['block_length'])
+emit('PROMPT_LOCAL_HALF_WINDOW', cfg.get('prompt', {}).get('local_half_window', 32))
 emit('PROMPT_TEMPERATURE', cfg['prompt']['temperature'])
 emit('PROMPT_CFG_SCALE', cfg['prompt']['cfg_scale'])
 emit('PROMPT_REMASKING', cfg['prompt']['remasking'])
@@ -86,6 +89,7 @@ run_dummy() {
     --steps "$DUMMY_STEPS" \
     --gen-length "$DUMMY_GEN_LENGTH" \
     --block-length "$DUMMY_BLOCK_LENGTH" \
+    --local-half-window "$DUMMY_LOCAL_HALF_WINDOW" \
     --device "$DUMMY_DEVICE" \
     --output "$DUMMY_NPY" \
     --plot "$DUMMY_PNG"
@@ -107,6 +111,7 @@ run_real() {
     --steps "$REAL_STEPS" \
     --gen-length "$REAL_GEN_LENGTH" \
     --block-length "$REAL_BLOCK_LENGTH" \
+    --local-half-window "$REAL_LOCAL_HALF_WINDOW" \
     --temperature "$REAL_TEMPERATURE" \
     --cfg-scale "$REAL_CFG_SCALE" \
     --remasking "$REAL_REMASKING" \
@@ -154,6 +159,7 @@ run_prompt() {
     --steps "$PROMPT_STEPS" \
     --gen-length "$PROMPT_GEN_LENGTH" \
     --block-length "$PROMPT_BLOCK_LENGTH" \
+    --local-half-window "$PROMPT_LOCAL_HALF_WINDOW" \
     --temperature "$PROMPT_TEMPERATURE" \
     --cfg-scale "$PROMPT_CFG_SCALE" \
     --remasking "$PROMPT_REMASKING" \

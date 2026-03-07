@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--cfg-scale", type=float, default=0.0)
     parser.add_argument("--remasking", type=str, default="low_confidence", choices=["low_confidence", "random"])
+    parser.add_argument("--local-half-window", type=int, default=32, help="Local window size for calculating global ratio.")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()
@@ -85,7 +86,8 @@ def main():
             temperature=args.temperature, 
             cfg_scale=args.cfg_scale, 
             remasking=args.remasking,
-            save_dynamics_path=dynamics_path
+            save_dynamics_path=dynamics_path,
+            local_half_window=args.local_half_window
         )
         output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
         
