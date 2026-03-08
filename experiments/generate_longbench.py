@@ -36,6 +36,8 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--cfg-scale", type=float, default=0.0)
     parser.add_argument("--remasking", type=str, default="low_confidence", choices=["low_confidence", "random"])
+    parser.add_argument("--logits-eos-inf", action="store_true", help="Set EOS logit to -inf")
+    parser.add_argument("--confidence-eos-eot-inf", action="store_true", help="Set EOS/EoT confidence to -inf")
     parser.add_argument("--local-half-window", type=int, default=64, help="Local window size for calculating global ratio.")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
@@ -131,6 +133,8 @@ def main():
                     temperature=args.temperature,
                     cfg_scale=args.cfg_scale,
                     remasking=args.remasking,
+                    logits_eos_inf=args.logits_eos_inf,
+                    confidence_eos_eot_inf=args.confidence_eos_eot_inf,
                     save_dynamics_path=dynamics_path,
                     local_half_window=args.local_half_window,
                 )
