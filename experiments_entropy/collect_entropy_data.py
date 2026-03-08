@@ -21,6 +21,17 @@ def sanitize_dataset_name(name: str) -> str:
     return safe or "dataset"
 
 
+def build_task_prompt(task_name: str, context: str) -> str:
+    """把原始上下文包装成明确任务提示，减少模型输出乱码概率。"""
+    if task_name == "text_continuation":
+        return (
+            "Continue the following passage in fluent, coherent English. "
+            "Keep the same topic and style. Only output the continuation.\n\n"
+            f"Passage:\n{context}\n\nContinuation:"
+        )
+    return f"Task: {task_name}\n\nInput:\n{context}\n\nOutput:"
+
+
 def build_dummy_model(device: str) -> LLaDAModelLM:
     """构建一个极小的随机权重模型，用于验证完整数据闭环。"""
     config = LLaDAConfig(
@@ -211,12 +222,31 @@ def main() -> None:
 
     with open(args.output_jsonl, "a", encoding="utf-8") as f_jsonl:
         for sample_id, sample in enumerate(selected_samples):
+            source_context = tokenizer.decode(sample["prompt_ids"], skip_special_tokens=True)
+            task_prompt = build_task_prompt(args.task_name, source_context)
+            if hasattr(tokenizer, "apply_chat_template"):
+                formatted_prompt = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": task_prompt}],
+                    add_generation_prompt=True,
+                    tokenize=False,
+                )
+            else:
+                formatted_prompt = task_prompt
+
+            encoded = tokenizer(
+                [formatted_prompt],
+                add_special_tokens=False,
+                padding=True,
+                return_tensors="pt",
+            )
+            input_ids = encoded["input_ids"].to(device)
+            attention_mask = encoded["attention_mask"].to(device)
+
             print(
-                f"[RUN] dataset={args.dataset_name} sample={sample_id + 1}/{len(selected_samples)} index={sample['index']}",
+                f"[RUN] dataset={args.dataset_name} sample={sample_id + 1}/{len(selected_samples)} "
+                f"index={sample['index']} task={args.task_name}",
                 flush=True,
             )
-            input_ids = torch.tensor([sample["prompt_ids"]], dtype=torch.long, device=device)
-            attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=device)
             sample_key = f"{safe_dataset_name}_sample_{sample_id:03d}_{args.pairs_name_suffix}"
             sample_pairs_path = str(Path(args.output_dir) / f"{sample_key}.npy")
 
@@ -241,7 +271,6 @@ def main() -> None:
 
             sample_pairs = np.load(sample_pairs_path).astype(np.float32)
 
-            prompt_text = tokenizer.decode(sample["prompt_ids"], skip_special_tokens=True)
             prediction_ids = out[:, input_ids.shape[1]:].detach().cpu().numpy()[0].tolist()
             prediction_text = tokenizer.decode(prediction_ids, skip_special_tokens=True)
 
@@ -250,7 +279,9 @@ def main() -> None:
                 "index": int(sample["index"]),
                 "task": args.task_name,
                 "inputs": {
-                    "prompt": prompt_text,
+                    "source_context": source_context,
+                    "task_prompt": task_prompt,
+                    "formatted_prompt": formatted_prompt,
                 },
                 "outputs": {
                     "generated_text": prediction_text,
