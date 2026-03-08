@@ -10,9 +10,11 @@ model:
 
 paths:
   results_dir: results
-  dataset_subdir: wikitext
+  wikitext_subdir: wikitext
+  prompt_subdir: prompt
+  gsm8k_subdir: gsm8k
   pairs_name_suffix: entropy_ratio_pairs
-  figure_name_suffix: phase_transition_kde
+  figure_name_suffix: phase_transition_hist
   jsonl_filename: wikitext_outputs.jsonl
 
 data:
@@ -26,11 +28,42 @@ data:
   steps: 64
   block_length: 768
 
+wikitext:
+  enabled: true
+
+prompt:
+  enabled: true
+  prompts_file: prompts/prompts.txt
+  prompt_key: prompt
+  batch_size: 1
+  steps: 64
+  gen_length: 768
+  block_length: 768
+  temperature: 0.0
+  cfg_scale: 0.0
+  remasking: low_confidence
+
+gsm8k:
+  enabled: true
+  split: test
+  max_samples: 100
+  batch_size: 1
+  steps: 64
+  gen_length: 768
+  block_length: 768
+  temperature: 0.0
+  cfg_scale: 0.0
+  remasking: low_confidence
+
 runtime:
   device: auto
 
 plot:
-  title: Entropy-Global Attention Phase Transition (2D KDE)
+  wikitext_title: Entropy-Global Attention Phase Transition (2D Histogram)
+  prompt_title_prefix: Prompt Entropy-Global Histogram
+  gsm8k_title_prefix: GSM8K Entropy-Global Histogram
 
 run:
   wikitext: true
+  prompt: true
+  gsm8k: true
