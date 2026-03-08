@@ -9,6 +9,13 @@ from generate import generate
 from model.modeling_llada import LLaDAModelLM
 
 
+DEFAULT_PROMPTS = [
+    "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?",
+    "Joy can read 8 pages of a book in 20 minutes. How many hours will it take her to read 120 pages?",
+    "Randy has 60 mango trees on his farm. He also has 5 less than half as many coconut trees as mango trees. How many trees does Randy have in all on his farm?",
+]
+
+
 def load_prompts(prompts_file: str, prompt_key: str = "prompt") -> list[str]:
     if not os.path.isfile(prompts_file):
         raise FileNotFoundError(f"Prompts file not found: {prompts_file}")
@@ -41,7 +48,7 @@ def load_prompts(prompts_file: str, prompt_key: str = "prompt") -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run LLaDA generation for prompts loaded from a local file")
     parser.add_argument("--model-id", type=str, default="GSAI-ML/LLaDA-8B-Instruct")
-    parser.add_argument("--prompts-file", type=str, required=True, help="Path to .txt or .jsonl prompts file")
+    parser.add_argument("--prompts-file", type=str, default=None, help="Optional path to .txt or .jsonl prompts file")
     parser.add_argument("--prompt-key", type=str, default="prompt", help="Prompt field name when using .jsonl")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--steps", type=int, default=64)
@@ -56,9 +63,19 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()
 
-    prompts = load_prompts(args.prompts_file, args.prompt_key)
+    if args.prompts_file:
+        if os.path.isfile(args.prompts_file):
+            prompts = load_prompts(args.prompts_file, args.prompt_key)
+            print(f"[INFO] Loaded {len(prompts)} prompts from file: {args.prompts_file}")
+        else:
+            prompts = DEFAULT_PROMPTS
+            print(f"[WARN] prompts file not found: {args.prompts_file}, fallback to DEFAULT_PROMPTS")
+    else:
+        prompts = DEFAULT_PROMPTS
+        print(f"[INFO] Using built-in DEFAULT_PROMPTS ({len(prompts)} prompts)")
+
     if len(prompts) == 0:
-        raise RuntimeError(f"No valid prompts found in: {args.prompts_file}")
+        raise RuntimeError("No valid prompts available.")
 
     if args.device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -86,7 +103,7 @@ def main() -> None:
 
     records = []
     total_samples = len(prompts)
-    print(f"[INFO] prompts_file={args.prompts_file}, total_prompts={total_samples}")
+    print(f"[INFO] total_prompts={total_samples}")
 
     for start in range(0, total_samples, args.batch_size):
         end = min(start + args.batch_size, total_samples)

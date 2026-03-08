@@ -174,25 +174,36 @@ run_prompt() {
     echo "[SKIP] prompt.enabled=false"
     return
   fi
-  if [ ! -f "$PROMPTS_FILE" ]; then
-    echo "[ERROR] prompts file not found: $PROMPTS_FILE"
-    exit 1
-  fi
 
   echo "[RUN] Prompt generation"
-  python3 generate_prompt.py \
-    --model-id "$MODEL_ID" \
-    --prompts-file "$PROMPTS_FILE" \
-    --prompt-key "$PROMPT_KEY" \
-    --batch-size "$PROMPT_BATCH_SIZE" \
-    --steps "$PROMPT_STEPS" \
-    --gen-length "$PROMPT_GEN_LENGTH" \
-    --block-length "$PROMPT_BLOCK_LENGTH" \
-    --temperature "$PROMPT_TEMPERATURE" \
-    --cfg-scale "$PROMPT_CFG_SCALE" \
-    --remasking "$PROMPT_REMASKING" \
-    --results-dir "$RESULTS_DIR" \
-    --device "$DEVICE"
+  if [ -f "$PROMPTS_FILE" ]; then
+    python3 generate_prompt.py \
+      --model-id "$MODEL_ID" \
+      --prompts-file "$PROMPTS_FILE" \
+      --prompt-key "$PROMPT_KEY" \
+      --batch-size "$PROMPT_BATCH_SIZE" \
+      --steps "$PROMPT_STEPS" \
+      --gen-length "$PROMPT_GEN_LENGTH" \
+      --block-length "$PROMPT_BLOCK_LENGTH" \
+      --temperature "$PROMPT_TEMPERATURE" \
+      --cfg-scale "$PROMPT_CFG_SCALE" \
+      --remasking "$PROMPT_REMASKING" \
+      --results-dir "$RESULTS_DIR" \
+      --device "$DEVICE"
+  else
+    echo "[WARN] prompts file not found: $PROMPTS_FILE, fallback to DEFAULT_PROMPTS"
+    python3 generate_prompt.py \
+      --model-id "$MODEL_ID" \
+      --batch-size "$PROMPT_BATCH_SIZE" \
+      --steps "$PROMPT_STEPS" \
+      --gen-length "$PROMPT_GEN_LENGTH" \
+      --block-length "$PROMPT_BLOCK_LENGTH" \
+      --temperature "$PROMPT_TEMPERATURE" \
+      --cfg-scale "$PROMPT_CFG_SCALE" \
+      --remasking "$PROMPT_REMASKING" \
+      --results-dir "$RESULTS_DIR" \
+      --device "$DEVICE"
+  fi
 
   count=0
   for npy in "$PROMPT_RESULTS_DIR"/prompt_pairs_*.npy; do

@@ -10,9 +10,47 @@ from model.modeling_llada import LLaDAModelLM
 from generate import generate
 
 
+DEFAULT_PROMPTS = [
+    "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?",
+    "Joy can read 8 pages of a book in 20 minutes. How many hours will it take her to read 120 pages?",
+    "Randy has 60 mango trees on his farm. He also has 5 less than half as many coconut trees as mango trees. How many trees does Randy have in all on his farm?",
+]
+
+
+def load_prompts_from_file(prompts_file: str, prompt_key: str = "prompt") -> list[str]:
+    if not os.path.isfile(prompts_file):
+        raise FileNotFoundError(f"Prompts file not found: {prompts_file}")
+
+    if prompts_file.endswith(".jsonl"):
+        prompts = []
+        with open(prompts_file, "r", encoding="utf-8") as f:
+            for line_no, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if prompt_key in obj:
+                    prompts.append(str(obj[prompt_key]).strip())
+                elif "content" in obj:
+                    prompts.append(str(obj["content"]).strip())
+                else:
+                    raise KeyError(f"Line {line_no} has no '{prompt_key}' or 'content' field")
+        return [p for p in prompts if p]
+
+    prompts = []
+    with open(prompts_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                prompts.append(line)
+    return prompts
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run LLaDA generation for manual prompts and collect attention dynamics")
     parser.add_argument("--model-id", type=str, default="GSAI-ML/LLaDA-8B-Instruct")
+    parser.add_argument("--prompts-file", type=str, default=None, help="Optional .txt/.jsonl prompts file")
+    parser.add_argument("--prompt-key", type=str, default="prompt", help="Prompt field name when using .jsonl")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--steps", type=int, default=128)
     parser.add_argument("--gen-length", type=int, default=128)
@@ -24,6 +62,7 @@ def main():
     parser.add_argument("--confidence-eos-eot-inf", action="store_true", help="Set EOS/EoT confidence to -inf")
     parser.add_argument("--local-half-window", type=int, default=32, help="Local window size for calculating global ratio.")
     parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--output-txt", type=str, default=None, help="Optional txt output path")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()
 
@@ -51,11 +90,14 @@ def main():
     dataset_results_dir = os.path.join(args.results_dir, "prompt")
     os.makedirs(dataset_results_dir, exist_ok=True)
 
-    prompts = [
-        "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?",
-        "Joy can read 8 pages of a book in 20 minutes. How many hours will it take her to read 120 pages?",
-        "Randy has 60 mango trees on his farm. He also has 5 less than half as many coconut trees as mango trees. How many trees does Randy have in all on his farm?"
-    ]
+    if args.prompts_file:
+        prompts = load_prompts_from_file(args.prompts_file, args.prompt_key)
+        print(f"[INFO] Loaded {len(prompts)} prompts from file: {args.prompts_file}")
+    else:
+        prompts = DEFAULT_PROMPTS
+        print(f"[INFO] Using built-in {len(prompts)} default prompts")
+    if len(prompts) == 0:
+        raise RuntimeError("No prompts to run.")
 
     records = []
     
@@ -113,6 +155,14 @@ def main():
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     print(f"Saved {len(records)} samples to {output_jsonl}")
+
+    output_txt = args.output_txt or os.path.join(dataset_results_dir, "prompt_outputs.txt")
+    with open(output_txt, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(f"[{record['index']}] Prompt:\n{record['prompt']}\n\n")
+            f.write(f"Prediction:\n{record['prediction']}\n")
+            f.write("-" * 80 + "\n")
+    print(f"Saved txt outputs to {output_txt}")
 
 
 if __name__ == '__main__':
