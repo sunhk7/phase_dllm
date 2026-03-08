@@ -2,7 +2,15 @@
 set -euo pipefail
 
 MODE="${1:-all}"          # wikitext | prompt | gsm8k | all
-CONFIG_PATH="${2:-config.yaml}"
+shift || true
+
+CONFIG_PATH="config.yaml"
+if [ "$#" -gt 0 ] && [[ "${1:-}" != -* ]]; then
+  CONFIG_PATH="$1"
+  shift
+fi
+
+EXTRA_ARGS=("$@")
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "[ERROR] python3 not found"
@@ -64,6 +72,8 @@ emit('WIKITEXT_ENABLED', get('wikitext.enabled', True))
 emit('PROMPT_ENABLED', get('prompt.enabled', False))
 emit('PROMPTS_FILE', get('prompt.prompts_file', 'prompts/prompts.txt'))
 emit('PROMPT_KEY', get('prompt.prompt_key', 'prompt'))
+emit('PROMPT_STRATEGIES', get('prompt.strategies', 'A,B,C'))
+emit('PROMPT_ENTROPY_QUANTILE', get('prompt.entropy_quantile', 0.5))
 emit('PROMPT_BATCH_SIZE', get('prompt.batch_size', 1))
 emit('PROMPT_STEPS', get('prompt.steps', 64))
 emit('PROMPT_GEN_LENGTH', get('prompt.gen_length', 768))
@@ -181,6 +191,8 @@ run_prompt() {
       --model-id "$MODEL_ID" \
       --prompts-file "$PROMPTS_FILE" \
       --prompt-key "$PROMPT_KEY" \
+      --strategies "$PROMPT_STRATEGIES" \
+      --entropy-quantile "$PROMPT_ENTROPY_QUANTILE" \
       --batch-size "$PROMPT_BATCH_SIZE" \
       --steps "$PROMPT_STEPS" \
       --gen-length "$PROMPT_GEN_LENGTH" \
@@ -189,11 +201,14 @@ run_prompt() {
       --cfg-scale "$PROMPT_CFG_SCALE" \
       --remasking "$PROMPT_REMASKING" \
       --results-dir "$RESULTS_DIR" \
-      --device "$DEVICE"
+      --device "$DEVICE" \
+      "${EXTRA_ARGS[@]}"
   else
     echo "[WARN] prompts file not found: $PROMPTS_FILE, fallback to DEFAULT_PROMPTS"
     python3 generate_prompt.py \
       --model-id "$MODEL_ID" \
+      --strategies "$PROMPT_STRATEGIES" \
+      --entropy-quantile "$PROMPT_ENTROPY_QUANTILE" \
       --batch-size "$PROMPT_BATCH_SIZE" \
       --steps "$PROMPT_STEPS" \
       --gen-length "$PROMPT_GEN_LENGTH" \
@@ -202,15 +217,26 @@ run_prompt() {
       --cfg-scale "$PROMPT_CFG_SCALE" \
       --remasking "$PROMPT_REMASKING" \
       --results-dir "$RESULTS_DIR" \
-      --device "$DEVICE"
+      --device "$DEVICE" \
+      "${EXTRA_ARGS[@]}"
   fi
 
   count=0
-  for npy in "$PROMPT_RESULTS_DIR"/prompt_pairs_*.npy; do
+  for npy in "$PROMPT_RESULTS_DIR"/prompt_*_pairs_*.npy; do
     [ -f "$npy" ] || continue
     png="${npy%.npy}_${FIGURE_NAME_SUFFIX}.png"
     title="${PROMPT_TITLE_PREFIX} $(basename "$npy" .npy)"
-    python3 plot_entropy_kde.py "$npy" --output "$png" --title "$title"
+
+    meta="${npy/_pairs_/_meta_}"
+    plot_input="$npy"
+    plot_extra=()
+    if [ -f "$meta" ]; then
+      plot_input="$meta"
+      plot_extra=(--only-updated)
+      title="${title} (updated-only)"
+    fi
+
+    python3 plot_entropy_kde.py "$plot_input" --output "$png" --title "$title" "${plot_extra[@]}"
     count=$((count + 1))
   done
   if [ "$count" -eq 0 ]; then
@@ -276,7 +302,7 @@ case "$MODE" in
     run_gsm8k
     ;;
   *)
-    echo "Usage: bash commands.sh [wikitext|prompt|gsm8k|all] [config.yaml]"
+    echo "Usage: bash commands.sh [wikitext|prompt|gsm8k|all] [config.yaml] [extra args...]"
     exit 1
     ;;
 esac

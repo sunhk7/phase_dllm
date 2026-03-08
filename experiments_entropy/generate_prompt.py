@@ -57,6 +57,9 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--cfg-scale", type=float, default=0.0)
     parser.add_argument("--remasking", type=str, default="low_confidence", choices=["low_confidence", "random"])
+    parser.add_argument("--strategies", type=str, default="A,B,C", help="Comma-separated strategies, e.g. A,B,C")
+    parser.add_argument("--entropy-threshold", type=float, default=None, help="Optional absolute entropy threshold")
+    parser.add_argument("--entropy-quantile", type=float, default=0.5, help="Entropy split quantile when threshold is None")
     parser.add_argument("--logits-eos-inf", action="store_true", help="Set EOS logit to -inf")
     parser.add_argument("--confidence-eos-eot-inf", action="store_true", help="Set EOS/EoT confidence to -inf")
     parser.add_argument("--results-dir", type=str, default="results")
@@ -101,64 +104,84 @@ def main() -> None:
     prompt_results_dir = os.path.join(args.results_dir, "prompt")
     os.makedirs(prompt_results_dir, exist_ok=True)
 
+    strategy_list = [s.strip().upper() for s in args.strategies.split(",") if s.strip()]
+    if len(strategy_list) == 0:
+        strategy_list = ["A", "B", "C"]
+
     records = []
     total_samples = len(prompts)
-    print(f"[INFO] total_prompts={total_samples}")
+    print(f"[INFO] total_prompts={total_samples}, strategies={strategy_list}")
 
-    for start in range(0, total_samples, args.batch_size):
-        end = min(start + args.batch_size, total_samples)
-        batch_prompts = prompts[start:end]
+    for strategy in strategy_list:
+        print(f"[STRATEGY] Running strategy={strategy}")
+        for start in range(0, total_samples, args.batch_size):
+            end = min(start + args.batch_size, total_samples)
+            batch_prompts = prompts[start:end]
 
-        messages = [{"role": "user", "content": p} for p in batch_prompts]
-        formatted_prompts = [
-            tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False)
-            for message in messages
-        ]
+            messages = [{"role": "user", "content": p} for p in batch_prompts]
+            formatted_prompts = [
+                tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False)
+                for message in messages
+            ]
 
-        encoded_outputs = tokenizer(
-            formatted_prompts,
-            add_special_tokens=False,
-            padding=True,
-            return_tensors="pt",
-        )
-        input_ids = encoded_outputs["input_ids"].to(device)
-        attention_mask = encoded_outputs["attention_mask"].to(device)
-
-        pairs_path = os.path.join(prompt_results_dir, f"prompt_pairs_{start:05d}_{end - 1:05d}.npy")
-        print(f"[RUN] prompt batch {start}-{end - 1}, pairs={pairs_path}")
-
-        out = generate(
-            model,
-            input_ids,
-            attention_mask=attention_mask,
-            steps=args.steps,
-            gen_length=args.gen_length,
-            block_length=args.block_length,
-            temperature=args.temperature,
-            cfg_scale=args.cfg_scale,
-            remasking=args.remasking,
-            logits_eos_inf=args.logits_eos_inf,
-            confidence_eos_eot_inf=args.confidence_eos_eot_inf,
-            collect_attention_dynamics=False,
-            save_dynamics_path=None,
-            collect_entropy_ratio_pairs=True,
-            save_entropy_ratio_path=pairs_path,
-            entropy_layer_index=24,
-        )
-        output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
-
-        for local_idx, (prompt, prediction) in enumerate(zip(batch_prompts, output_text)):
-            sample_idx = start + local_idx
-            records.append(
-                {
-                    "index": sample_idx,
-                    "prompt": prompt,
-                    "prediction": prediction,
-                    "pairs_path": pairs_path,
-                }
+            encoded_outputs = tokenizer(
+                formatted_prompts,
+                add_special_tokens=False,
+                padding=True,
+                return_tensors="pt",
             )
-            print(f"[{sample_idx}] {prediction}")
-            print("-" * 50)
+            input_ids = encoded_outputs["input_ids"].to(device)
+            attention_mask = encoded_outputs["attention_mask"].to(device)
+
+            pairs_path = os.path.join(
+                prompt_results_dir,
+                f"prompt_{strategy}_pairs_{start:05d}_{end - 1:05d}.npy",
+            )
+            meta_path = os.path.join(
+                prompt_results_dir,
+                f"prompt_{strategy}_meta_{start:05d}_{end - 1:05d}.npy",
+            )
+            print(f"[RUN] strategy={strategy} prompt batch {start}-{end - 1}, pairs={pairs_path}")
+
+            out = generate(
+                model,
+                input_ids,
+                attention_mask=attention_mask,
+                steps=args.steps,
+                gen_length=args.gen_length,
+                block_length=args.block_length,
+                temperature=args.temperature,
+                cfg_scale=args.cfg_scale,
+                remasking=args.remasking,
+                logits_eos_inf=args.logits_eos_inf,
+                confidence_eos_eot_inf=args.confidence_eos_eot_inf,
+                collect_attention_dynamics=False,
+                save_dynamics_path=None,
+                collect_entropy_ratio_pairs=True,
+                save_entropy_ratio_path=pairs_path,
+                entropy_layer_index=24,
+                strategy_mode=strategy,
+                entropy_threshold=args.entropy_threshold,
+                entropy_quantile=args.entropy_quantile,
+                collect_entropy_ratio_meta=True,
+                save_entropy_ratio_meta_path=meta_path,
+            )
+            output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
+
+            for local_idx, (prompt, prediction) in enumerate(zip(batch_prompts, output_text)):
+                sample_idx = start + local_idx
+                records.append(
+                    {
+                        "strategy": strategy,
+                        "index": sample_idx,
+                        "prompt": prompt,
+                        "prediction": prediction,
+                        "pairs_path": pairs_path,
+                        "meta_path": meta_path,
+                    }
+                )
+                print(f"[{strategy}][{sample_idx}] {prediction}")
+                print("-" * 50)
 
     output_jsonl = os.path.join(prompt_results_dir, "prompt_outputs.jsonl")
     with open(output_jsonl, "w", encoding="utf-8") as f:

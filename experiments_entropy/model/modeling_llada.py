@@ -639,8 +639,10 @@ class LLaDABlock(nn.Module):
         attention mask if passed, and applying dropout if a probability greater than 0.0 is specified.
         """
         track_global_ratio = hasattr(self, "global_ratio_tracker")
+        query_local_mask = getattr(self, "query_local_mask", None)
+        apply_selective_local = query_local_mask is not None
 
-        if self.flash_attn_func is not None and attn_mask is None and not track_global_ratio:
+        if self.flash_attn_func is not None and attn_mask is None and not track_global_ratio and not apply_selective_local:
             r = self.flash_attn_func(
                 q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), dropout_p=dropout_p, causal=False
             )
@@ -655,8 +657,7 @@ class LLaDABlock(nn.Module):
                 k = k.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
                 v = v.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
 
-            if track_global_ratio:
-                # Track token-level global attention mass outside local window W=64 (diagonal +/- 32).
+            if track_global_ratio or apply_selective_local:
                 attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(q.size(-1))
                 if attn_mask is not None:
                     attn_scores = attn_scores + attn_mask
@@ -671,21 +672,60 @@ class LLaDABlock(nn.Module):
                 local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
 
                 context_length = int(getattr(self, "context_length", 0) or 0)
-                if context_length < query_len:
-                    generated_attn = attn_weights[:, :, context_length:, :]
-                    generated_local_mask = local_window_mask.unsqueeze(0).unsqueeze(0)[:, :, context_length:, :]
-                else:
-                    generated_attn = attn_weights
-                    generated_local_mask = local_window_mask.unsqueeze(0).unsqueeze(0)
+                local_window_mask_4d = local_window_mask.unsqueeze(0).unsqueeze(0)
 
-                # Sum on key dim, then average on head dim -> (batch_size, generated_seq_len)
-                global_ratio = generated_attn.masked_fill(generated_local_mask, 0.0).sum(dim=-1).mean(dim=1)
-                self.global_ratio_tracker.append(global_ratio.detach().cpu().numpy())
+                if apply_selective_local:
+                    local_mask_tensor = query_local_mask
+                    if not torch.is_tensor(local_mask_tensor):
+                        local_mask_tensor = torch.as_tensor(local_mask_tensor, device=attn_weights.device)
+                    local_mask_tensor = local_mask_tensor.to(device=attn_weights.device, dtype=torch.bool)
+                    if local_mask_tensor.ndim == 1:
+                        local_mask_tensor = local_mask_tensor.unsqueeze(0)
+
+                    batch_size = attn_weights.shape[0]
+                    if local_mask_tensor.shape[0] == 1 and batch_size > 1:
+                        local_mask_tensor = local_mask_tensor.expand(batch_size, -1)
+
+                    full_query_local_mask = torch.zeros(
+                        (batch_size, query_len), device=attn_weights.device, dtype=torch.bool
+                    )
+                    if context_length < query_len:
+                        generated_query_len = query_len - context_length
+                        use_len = min(generated_query_len, local_mask_tensor.shape[1])
+                        use_batch = min(batch_size, local_mask_tensor.shape[0])
+                        if use_len > 0 and use_batch > 0:
+                            full_query_local_mask[:use_batch, context_length : context_length + use_len] = (
+                                local_mask_tensor[:use_batch, :use_len]
+                            )
+                    else:
+                        use_len = min(query_len, local_mask_tensor.shape[1])
+                        use_batch = min(batch_size, local_mask_tensor.shape[0])
+                        if use_len > 0 and use_batch > 0:
+                            full_query_local_mask[:use_batch, :use_len] = local_mask_tensor[:use_batch, :use_len]
+
+                    query_selector = full_query_local_mask.unsqueeze(1).unsqueeze(-1)
+                    selective_global_mask = query_selector & (~local_window_mask_4d)
+                    if selective_global_mask.any():
+                        attn_weights = attn_weights.masked_fill(selective_global_mask, 0.0)
+                        denom = attn_weights.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+                        attn_weights = attn_weights / denom
+
+                if track_global_ratio:
+                    if context_length < query_len:
+                        generated_attn = attn_weights[:, :, context_length:, :]
+                        generated_local_mask = local_window_mask_4d[:, :, context_length:, :]
+                    else:
+                        generated_attn = attn_weights
+                        generated_local_mask = local_window_mask_4d
+
+                    # Sum on key dim, then average on head dim -> (batch_size, generated_seq_len)
+                    global_ratio = generated_attn.masked_fill(generated_local_mask, 0.0).sum(dim=-1).mean(dim=1)
+                    self.global_ratio_tracker.append(global_ratio.detach().cpu().numpy())
 
                 if dropout_p > 0.0:
                     attn_weights = F.dropout(attn_weights, p=dropout_p, training=self.training)
 
-                del attn_scores, generated_attn, generated_local_mask, local_window_mask, global_ratio
+                del attn_scores, local_window_mask, local_window_mask_4d
                 return torch.matmul(attn_weights.to(dtype=v.dtype), v)
 
             # Modify: MDM set causal to False.

@@ -35,6 +35,8 @@ prompt:
   enabled: true
   prompts_file: prompts/prompts.txt
   prompt_key: prompt
+  strategies: A,B,C
+  entropy_quantile: 0.5
   batch_size: 1
   steps: 64
   gen_length: 768
