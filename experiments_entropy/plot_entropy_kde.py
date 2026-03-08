@@ -8,9 +8,9 @@ import seaborn as sns
 def plot_entropy_kde(
     npy_path: str,
     output_path: str = "phase_transition_kde.png",
-    title: str = "Entropy-Global Attention Phase Transition (2D KDE)",
+    title: str = "Entropy-Global Attention Phase Transition (2D Histogram)",
 ) -> str:
-    """读取 entropy-ratio 配对数据并绘制二维核密度图。"""
+    """读取 entropy-ratio 配对数据并绘制二维直方图（不做 KDE 平滑）。"""
     pairs = np.load(npy_path)
     if pairs.ndim != 2 or pairs.shape[1] != 2:
         raise ValueError(f"期望输入形状为 (N, 2)，实际得到 {pairs.shape}")
@@ -19,7 +19,7 @@ def plot_entropy_kde(
     entropy = pairs[:, 0]
     global_ratio = pairs[:, 1]
 
-    # 删除无效值，避免 KDE 数值异常。
+    # 删除无效值，避免二维直方图数值异常。
     valid = np.isfinite(entropy) & np.isfinite(global_ratio)
     entropy = entropy[valid]
     global_ratio = global_ratio[valid]
@@ -29,14 +29,13 @@ def plot_entropy_kde(
     sns.set_theme(style="whitegrid", context="talk")
     fig, ax = plt.subplots(figsize=(11, 8))
 
-    # 使用二维核密度估计展示高密度区域，并打开 colorbar 体现密度强度。
-    kde = sns.kdeplot(
+    # 使用二维直方图展示真实频数分布，不进行平滑。
+    hist = sns.histplot(
         x=entropy,
         y=global_ratio,
-        fill=True,
+        bins=(80, 80),
+        stat="count",
         cmap="mako",
-        levels=60,
-        thresh=0.01,
         cbar=True,
         ax=ax,
     )
@@ -68,11 +67,11 @@ def plot_entropy_kde(
         bbox={"facecolor": "#1b4d5c", "alpha": 0.70, "pad": 6},
     )
 
-    # seaborn.kdeplot(cbar=True) 会创建 colorbar，这里补充标签便于论文图引用。
-    if kde.collections:
-        cbar = kde.collections[0].colorbar
+    # seaborn.histplot(cbar=True) 会创建 colorbar，这里补充标签便于论文图引用。
+    if hist.collections:
+        cbar = hist.collections[0].colorbar
         if cbar is not None:
-            cbar.set_label("Density", fontsize=12)
+            cbar.set_label("Count", fontsize=12)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=300)
@@ -81,10 +80,10 @@ def plot_entropy_kde(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot entropy/global-ratio KDE figure")
+    parser = argparse.ArgumentParser(description="Plot entropy/global-ratio 2D histogram")
     parser.add_argument("npy_path", type=str, help="Path to entropy_ratio_pairs.npy")
     parser.add_argument("--output", type=str, default="phase_transition_kde.png")
-    parser.add_argument("--title", type=str, default="Entropy-Global Attention Phase Transition (2D KDE)")
+    parser.add_argument("--title", type=str, default="Entropy-Global Attention Phase Transition (2D Histogram)")
     args = parser.parse_args()
 
     output = plot_entropy_kde(args.npy_path, args.output, args.title)
