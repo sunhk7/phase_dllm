@@ -192,6 +192,11 @@ def main() -> None:
         samples=args.samples,
         prompt_length=args.prompt_length,
     )
+    print(
+        f"[INFO] dataset={args.dataset_name}/{args.dataset_split}, selected_samples={len(selected_samples)}, "
+        f"prompt_length={args.prompt_length}, gen_length={args.gen_length}, steps={args.steps}",
+        flush=True,
+    )
     model = build_model(
         model_source=args.model_source,
         model_id=args.model_id,
@@ -199,9 +204,17 @@ def main() -> None:
         model_dtype_name=args.model_dtype,
         device=device,
     )
+    print(
+        f"[INFO] model_source={args.model_source}, model_id={args.model_id}, device={device}, dtype={args.model_dtype}",
+        flush=True,
+    )
 
     with open(args.output_jsonl, "a", encoding="utf-8") as f_jsonl:
         for sample_id, sample in enumerate(selected_samples):
+            print(
+                f"[RUN] dataset={args.dataset_name} sample={sample_id + 1}/{len(selected_samples)} index={sample['index']}",
+                flush=True,
+            )
             input_ids = torch.tensor([sample["prompt_ids"]], dtype=torch.long, device=device)
             attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=device)
             sample_key = f"{safe_dataset_name}_sample_{sample_id:03d}_{args.pairs_name_suffix}"
@@ -248,6 +261,11 @@ def main() -> None:
             }
             # 追加写入：每个样本一行 JSON。
             f_jsonl.write(json.dumps(record, ensure_ascii=False) + "\n")
+            print(
+                f"[DONE] dataset={args.dataset_name} sample={sample_id + 1}/{len(selected_samples)} "
+                f"pairs_shape={sample_pairs.shape} pairs_path={sample_pairs_path}",
+                flush=True,
+            )
 
             del sample_pairs, out, input_ids, attention_mask
             if device == "cuda":

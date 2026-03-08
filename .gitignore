@@ -84,7 +84,7 @@ dist/
 ############################
 # OS
 ############################
-**/.DS_Store
+.DS_Store
 Thumbs.db
 
 ############################
@@ -97,3 +97,5 @@ temp/
 ############################
 experiments/*/results/
 experiments/*/logs/
+
+prompt.md
