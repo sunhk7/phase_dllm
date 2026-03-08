@@ -1,0 +1,29 @@
+experiment:
+  name: llada_entropy_phase_transition
+  seed: 42
+
+paths:
+  results_dir: results
+  dataset_subdir: wikitext
+  pairs_name_suffix: entropy_ratio_pairs
+  figure_name_suffix: phase_transition_kde
+  jsonl_filename: wikitext_outputs.jsonl
+
+data:
+  dataset_name: wikitext-103-v1
+  dataset_split: test
+  samples: 5
+  tokenizer_id: GSAI-ML/LLaDA-8B-Instruct
+  prompt_length: 256
+  gen_length: 768
+  steps: 64
+  block_length: 768
+
+runtime:
+  device: auto
+
+plot:
+  title: Entropy-Global Attention Phase Transition (2D KDE)
+
+run:
+  wikitext: true
