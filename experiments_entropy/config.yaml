@@ -2,6 +2,12 @@ experiment:
   name: llada_entropy_phase_transition
   seed: 42
 
+model:
+  source: pretrained
+  model_id: GSAI-ML/LLaDA-8B-Instruct
+  trust_remote_code: true
+  dtype: auto
+
 paths:
   results_dir: results
   dataset_subdir: wikitext
@@ -12,6 +18,7 @@ paths:
 data:
   dataset_name: wikitext-103-v1
   dataset_split: test
+  task_name: text_continuation
   samples: 5
   tokenizer_id: GSAI-ML/LLaDA-8B-Instruct
   prompt_length: 256

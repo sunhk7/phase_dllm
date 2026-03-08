@@ -44,43 +44,93 @@ def build_dummy_model(device: str) -> LLaDAModelLM:
     return model.to(device=device, dtype=dtype).eval()
 
 
+def parse_bool(text: str) -> bool:
+    value = text.strip().lower()
+    if value in {"1", "true", "yes", "y"}:
+        return True
+    if value in {"0", "false", "no", "n"}:
+        return False
+    raise ValueError(f"Invalid bool value: {text}")
+
+
+def resolve_torch_dtype(device: str, dtype_name: str) -> torch.dtype:
+    if dtype_name == "auto":
+        return torch.bfloat16 if device == "cuda" else torch.float32
+    if dtype_name == "bfloat16":
+        return torch.bfloat16
+    if dtype_name == "float16":
+        return torch.float16
+    return torch.float32
+
+
+def build_model(
+    model_source: str,
+    model_id: str,
+    trust_remote_code: bool,
+    model_dtype_name: str,
+    device: str,
+) -> LLaDAModelLM:
+    if model_source == "dummy":
+        return build_dummy_model(device)
+
+    model_dtype = resolve_torch_dtype(device, model_dtype_name)
+    model = LLaDAModelLM.from_pretrained(
+        model_id,
+        trust_remote_code=trust_remote_code,
+        torch_dtype=model_dtype,
+    )
+    return model.to(device).eval()
+
+
 def select_wikitext_samples(
     tokenizer: AutoTokenizer,
     dataset_name: str,
     dataset_split: str,
     samples: int,
     prompt_length: int,
-    gen_length: int,
 ) -> list[dict]:
-    """从 wikitext 中选取多个可切分为 prompt+answer 的样本。"""
+    """从 wikitext 连续拼接文本中切分多个 prompt 样本。"""
     dataset = load_dataset("wikitext", dataset_name, split=dataset_split)
 
-    min_required = prompt_length + gen_length
+    min_required = prompt_length
+    stride = max(64, prompt_length // 2)
+    newline_ids = tokenizer("\n", add_special_tokens=False)["input_ids"]
+
     valid_samples = []
+    token_buffer: list[int] = []
+    last_row_index = -1
+
     for idx, row in enumerate(dataset):
         text = row.get("text", "").strip()
         if not text:
             continue
 
-        token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
-        if len(token_ids) < min_required:
-            continue
+        token_buffer.extend(tokenizer(text, add_special_tokens=False)["input_ids"])
+        if newline_ids:
+            token_buffer.extend(newline_ids)
+        last_row_index = idx
 
-        prompt_ids = token_ids[:prompt_length]
-        answer_ids = token_ids[prompt_length:prompt_length + gen_length]
-        valid_samples.append(
-            {
-                "index": idx,
-                "prompt_ids": prompt_ids,
-                "answer_ids": answer_ids,
-            }
-        )
-        if len(valid_samples) >= samples * 10:
+        # 使用滑动窗口从拼接后的长 token 序列中切分样本 prompt。
+        while len(token_buffer) >= min_required:
+            prompt_ids = token_buffer[:prompt_length]
+            valid_samples.append(
+                {
+                    "index": last_row_index,
+                    "prompt_ids": prompt_ids,
+                }
+            )
+            if len(valid_samples) >= samples * 12:
+                break
+            token_buffer = token_buffer[stride:]
+
+        if len(valid_samples) >= samples * 12:
             break
 
     if len(valid_samples) < samples:
         raise RuntimeError(
-            f"可用样本不足: 需要 {samples} 条，实际仅 {len(valid_samples)} 条。"
+            "可用样本不足: "
+            f"需要 {samples} 条，实际仅 {len(valid_samples)} 条。"
+            f"dataset={dataset_name}/{dataset_split}, min_required_tokens={min_required}"
         )
 
     selected_indices = random.sample(range(len(valid_samples)), samples)
@@ -89,6 +139,10 @@ def select_wikitext_samples(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Collect entropy/global-ratio pairs and save wikitext inference jsonl")
+    parser.add_argument("--model-source", type=str, default="pretrained", choices=["pretrained", "dummy"])
+    parser.add_argument("--model-id", type=str, default="GSAI-ML/LLaDA-8B-Instruct")
+    parser.add_argument("--trust-remote-code", type=str, default="true")
+    parser.add_argument("--model-dtype", type=str, default="auto", choices=["auto", "bfloat16", "float16", "float32"])
     parser.add_argument("--dataset-name", type=str, default="wikitext-103-v1")
     parser.add_argument("--dataset-split", type=str, default="test")
     parser.add_argument("--samples", type=int, default=5)
@@ -100,6 +154,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=str, default="results/wikitext")
     parser.add_argument("--pairs-name-suffix", type=str, default="entropy_ratio_pairs")
     parser.add_argument("--output-jsonl", type=str, default="results/wikitext/wikitext_outputs.jsonl")
+    parser.add_argument("--task-name", type=str, default="text_continuation")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -122,24 +177,31 @@ def main() -> None:
     os.makedirs(os.path.dirname(args.output_jsonl) or ".", exist_ok=True)
     safe_dataset_name = sanitize_dataset_name(args.dataset_name)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_id, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_id, trust_remote_code=parse_bool(args.trust_remote_code))
     if tokenizer.padding_side != "left":
         tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
         tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token_id == 126336:
+        raise RuntimeError("pad_token_id equals mask_id(126336), current generate() path does not support this case.")
 
-    samples = select_wikitext_samples(
+    selected_samples = select_wikitext_samples(
         tokenizer=tokenizer,
         dataset_name=args.dataset_name,
         dataset_split=args.dataset_split,
         samples=args.samples,
         prompt_length=args.prompt_length,
-        gen_length=args.gen_length,
     )
-    dummy_model = build_dummy_model(device)
+    model = build_model(
+        model_source=args.model_source,
+        model_id=args.model_id,
+        trust_remote_code=parse_bool(args.trust_remote_code),
+        model_dtype_name=args.model_dtype,
+        device=device,
+    )
 
     with open(args.output_jsonl, "a", encoding="utf-8") as f_jsonl:
-        for sample_id, sample in enumerate(samples):
+        for sample_id, sample in enumerate(selected_samples):
             input_ids = torch.tensor([sample["prompt_ids"]], dtype=torch.long, device=device)
             attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=device)
             sample_key = f"{safe_dataset_name}_sample_{sample_id:03d}_{args.pairs_name_suffix}"
@@ -148,7 +210,7 @@ def main() -> None:
             # 推理阶段使用 inference_mode，减少显存与 autograd 开销。
             with torch.inference_mode():
                 out = generate(
-                    dummy_model,
+                    model,
                     input_ids,
                     attention_mask=attention_mask,
                     steps=args.steps,
@@ -167,17 +229,22 @@ def main() -> None:
             sample_pairs = np.load(sample_pairs_path).astype(np.float32)
 
             prompt_text = tokenizer.decode(sample["prompt_ids"], skip_special_tokens=True)
-            answer_text = tokenizer.decode(sample["answer_ids"], skip_special_tokens=True)
             prediction_ids = out[:, input_ids.shape[1]:].detach().cpu().numpy()[0].tolist()
             prediction_text = tokenizer.decode(prediction_ids, skip_special_tokens=True)
 
             record = {
                 "dataset": args.dataset_name,
                 "index": int(sample["index"]),
-                "prompt": prompt_text,
-                "answer": answer_text,
-                "prediction": prediction_text,
-                "pairs_path": sample_pairs_path,
+                "task": args.task_name,
+                "inputs": {
+                    "prompt": prompt_text,
+                },
+                "outputs": {
+                    "generated_text": prediction_text,
+                },
+                "artifacts": {
+                    "pairs_path": sample_pairs_path,
+                },
             }
             # 追加写入：每个样本一行 JSON。
             f_jsonl.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -192,7 +259,7 @@ def main() -> None:
     print(f"Appended {args.samples} inference records to: {args.output_jsonl}")
 
     # 显式释放大对象，避免后续实验显存累计。
-    del dummy_model
+    del model
     if device == "cuda":
         torch.cuda.empty_cache()
 

@@ -30,6 +30,10 @@ def emit(k, v):
     print(f"{k}={shlex.quote(str(v))}")
 
 emit('SEED', cfg['experiment']['seed'])
+emit('MODEL_SOURCE', cfg['model']['source'])
+emit('MODEL_ID', cfg['model']['model_id'])
+emit('TRUST_REMOTE_CODE', cfg['model']['trust_remote_code'])
+emit('MODEL_DTYPE', cfg['model']['dtype'])
 emit('RESULTS_DIR', cfg['paths']['results_dir'])
 emit('DATASET_SUBDIR', cfg['paths']['dataset_subdir'])
 emit('PAIRS_NAME_SUFFIX', cfg['paths']['pairs_name_suffix'])
@@ -37,6 +41,7 @@ emit('FIGURE_NAME_SUFFIX', cfg['paths']['figure_name_suffix'])
 emit('JSONL_FILENAME', cfg['paths']['jsonl_filename'])
 emit('DATASET_NAME', cfg['data']['dataset_name'])
 emit('DATASET_SPLIT', cfg['data']['dataset_split'])
+emit('TASK_NAME', cfg['data']['task_name'])
 emit('SAMPLES', cfg['data']['samples'])
 emit('TOKENIZER_ID', cfg['data']['tokenizer_id'])
 emit('PROMPT_LENGTH', cfg['data']['prompt_length'])
@@ -62,8 +67,13 @@ run_wikitext() {
 
   echo "[RUN] Wikitext collect + plot"
   python3 collect_entropy_data.py \
+    --model-source "$MODEL_SOURCE" \
+    --model-id "$MODEL_ID" \
+    --trust-remote-code "$TRUST_REMOTE_CODE" \
+    --model-dtype "$MODEL_DTYPE" \
     --dataset-name "$DATASET_NAME" \
     --dataset-split "$DATASET_SPLIT" \
+    --task-name "$TASK_NAME" \
     --samples "$SAMPLES" \
     --tokenizer-id "$TOKENIZER_ID" \
     --prompt-length "$PROMPT_LENGTH" \
