@@ -23,7 +23,7 @@ def plot_attention_dynamics(npy_path: str, output_path: str | None = None, title
     fig_h = max(4, heatmap_data.shape[0] * 0.3)
 
     plt.figure(figsize=(fig_w, fig_h))
-    ax = sns.heatmap(heatmap_data, cmap="coolwarm", cbar=True)
+    ax = sns.heatmap(heatmap_data, cmap="coolwarm", cbar=True, vmin=0.0, vmax=0.7)
     ax.set_xlabel("Diffusion Timestep")
     ax.set_ylabel("Transformer Layers")
     ax.set_title(title)

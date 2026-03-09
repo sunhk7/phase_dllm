@@ -669,9 +669,14 @@ class LLaDABlock(nn.Module):
                 )
                 local_window_mask = torch.triu(local_window_mask, diagonal=-local_half_window)
                 local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
+                
+                context_length = getattr(self, "context_length", None)
+                # Ensure context (prompt) tokens are always treated as local/visible
+                if context_length is not None:
+                    local_window_mask[:, :context_length] = 1.0
+
                 global_window_mask = 1.0 - local_window_mask
 
-                context_length = getattr(self, "context_length", None)
                 if context_length is not None and context_length < query_len:
                     # Slice queries to focus only on generated tokens (VRAM optimization & accuracy)
                     sliced_attn_weights = attn_weights[:, :, context_length:, :]

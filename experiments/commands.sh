@@ -147,8 +147,6 @@ run_real() {
     --temperature "$REAL_TEMPERATURE" \
     --cfg-scale "$REAL_CFG_SCALE" \
     --remasking "$REAL_REMASKING" \
-    #--logits-eos-inf \
-    #--confidence-eos-eot-inf \
     --results-dir "$RESULTS_DIR" \
     --device "$REAL_DEVICE"
 
@@ -197,8 +195,6 @@ run_prompt() {
     --temperature "$PROMPT_TEMPERATURE" \
     --cfg-scale "$PROMPT_CFG_SCALE" \
     --remasking "$PROMPT_REMASKING" \
-    #--logits-eos-inf \
-    #--confidence-eos-eot-inf \
     --results-dir "$RESULTS_DIR" \
     --device "$PROMPT_DEVICE"
 
@@ -241,8 +237,6 @@ run_longbench() {
     --temperature "$LONGBENCH_TEMPERATURE" \
     --cfg-scale "$LONGBENCH_CFG_SCALE" \
     --remasking "$LONGBENCH_REMASKING" \
-    #--logits-eos-inf \
-    #--confidence-eos-eot-inf \
     --results-dir "$RESULTS_DIR" \
     --device "$LONGBENCH_DEVICE"
 

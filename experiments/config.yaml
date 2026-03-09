@@ -24,11 +24,11 @@ real:
   enabled: true
   dataset: gsm8k
   split: test
-  max_samples: 10
+  max_samples: 3
   batch_size: 1
-  steps: 128
-  gen_length: 128
-  block_length: 128
+  steps: 256
+  gen_length: 512
+  block_length: 512
   temperature: 0.0
   cfg_scale: 0.0
   local_half_window: 32
