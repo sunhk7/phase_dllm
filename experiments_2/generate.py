@@ -45,29 +45,37 @@ def _iter_attention_modules(model):
 
 def _collect_and_save_attention_weights(model, save_dir, tag, prompt_length):
     """
-    Collect saved_attn_weights from all attention blocks and save to disk.
-    Only the **last layer's** attention weights are saved (most relevant for analysis).
+    Collect saved_attn_weights from requested layers and steps.
     """
     modules = _iter_attention_modules(model)
     if not modules:
         return
 
-    # Use the last layer (the one closest to the output)
-    last_module = modules[-1]
-    if not hasattr(last_module, "saved_attn_weights"):
-        return
+    # Check if we have multi-step/multi-layer dict
+    if not hasattr(model, "attention_collection_dict"):
+        # Fallback to just saving the last layer's weights
+        last_module = modules[-1]
+        if not hasattr(last_module, "saved_attn_weights"):
+            return
+        attn_weights = last_module.saved_attn_weights
+        weights_to_save = attn_weights
+        shape_info = list(attn_weights.shape)
+    else:
+        # Save the structured dict
+        weights_to_save = model.attention_collection_dict
+        shape_info = "dict of (step, layer) -> (batch, heads, seq, seq)"
+        # Free memory on model
+        del model.attention_collection_dict
 
-    attn_weights = last_module.saved_attn_weights  # (batch, heads, seq_len, seq_len)
     os.makedirs(save_dir, exist_ok=True)
-
     pt_path = os.path.join(save_dir, f"attn_weights_{tag}.pt")
-    torch.save(attn_weights, pt_path)
+    torch.save(weights_to_save, pt_path)
 
     meta_path = os.path.join(save_dir, f"attn_weights_{tag}_meta.json")
     with open(meta_path, "w") as f:
-        json.dump({"prompt_length": prompt_length, "shape": list(attn_weights.shape)}, f)
+        json.dump({"prompt_length": prompt_length, "shape": shape_info}, f)
 
-    print(f"[ATTN] Saved attention weights {list(attn_weights.shape)} -> {pt_path}")
+    print(f"[ATTN] Saved attention weights ({shape_info}) -> {pt_path}")
 
     # Clear saved weights from all modules to free memory
     for m in modules:
@@ -130,6 +138,9 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
         collect_attention_dynamics: Whether to collect per-layer global attention ratios each diffusion step.
         save_dynamics_path: Path to save attention dynamics matrix (.npy). Set to None to disable saving.
     '''
+    record_layers = getattr(model.config, "record_layers", None)
+    record_steps = getattr(model.config, "record_steps", None)
+
     x = torch.full((prompt.shape[0], prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
     x[:, :prompt.shape[1]] = prompt.clone()
 
@@ -144,12 +155,21 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
     assert steps % num_blocks == 0
     steps_per_block = steps // num_blocks
 
-    attention_modules = _iter_attention_modules(model) if collect_attention_dynamics else []
-    attention_dynamics = [] if attention_modules else None
+    attention_modules = _iter_attention_modules(model)
+    attention_dynamics = [] if collect_attention_dynamics and attention_modules else None
+
     for attention_module in attention_modules:
-        attention_module.global_ratio_tracker = []
-        attention_module.local_half_window = local_half_window
-        attention_module.context_length = prompt.shape[1]
+        if collect_attention_dynamics:
+            attention_module.global_ratio_tracker = []
+            attention_module.local_half_window = local_half_window
+            attention_module.context_length = prompt.shape[1]
+        if hasattr(attention_module, "saved_attn_weights"):
+            del attention_module.saved_attn_weights
+
+    global_step = 0
+    
+    if record_layers is not None and record_steps is not None:
+        model.attention_collection_dict = {}
 
     for num_block in range(num_blocks):
         block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
@@ -199,6 +219,16 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
                 transfer_index[j, select_index] = True
             x[transfer_index] = x0[transfer_index]
 
+            # Spatiotemporal Attention Collection
+            if record_layers is not None and record_steps is not None and global_step in record_steps:
+                for target_layer in record_layers:
+                    if target_layer < len(attention_modules):
+                        mod = attention_modules[target_layer]
+                        if hasattr(mod, "saved_attn_weights"):
+                            key = f"step_{global_step}_layer_{target_layer}"
+                            model.attention_collection_dict[key] = mod.saved_attn_weights.detach().cpu()
+                            del mod.saved_attn_weights # clear to save memory
+
             if attention_dynamics is not None:
                 step_ratio = []
                 for attention_module in attention_modules:
@@ -212,6 +242,8 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
                         value = float("nan")
                     step_ratio.append(value)
                 attention_dynamics.append(step_ratio)
+            
+            global_step += 1
 
     if attention_dynamics is not None and save_dynamics_path:
         np.save(save_dynamics_path, np.asarray(attention_dynamics, dtype=np.float32))
@@ -238,6 +270,7 @@ def main():
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--dynamic-window-size", type=int, default=None, help="L-Shape mask window size W. Set to enable L-Shape mask intervention.")
     parser.add_argument("--record-attention", action="store_true", help="Record and save post-softmax attention weights for offline analysis.")
+    parser.add_argument("--spatiotemporal-record", action="store_true", help="If active, saves layer 0,15,32 and step 0,T/2,T")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()
 
@@ -267,6 +300,10 @@ def main():
             cfg.dynamic_window_size = args.dynamic_window_size
         if args.record_attention:
             cfg.record_attention = True
+        if args.spatiotemporal_record:
+            cfg.record_attention = True
+            cfg.record_layers = [0, 15, 31]
+            cfg.record_steps = [0, args.steps // 2, args.steps - 1]
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 

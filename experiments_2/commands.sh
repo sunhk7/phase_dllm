@@ -59,6 +59,7 @@ emit('DYNAMIC_WINDOW_SIZE', get('l_shape_mask.dynamic_window_size', 64))
 
 # Attention Recording
 emit('RECORD_ATTENTION', get('attention_recording.record_attention', False))
+emit('SPATIOTEMPORAL_RECORD', get('attention_recording.spatiotemporal_record', False))
 
 # GSM8K
 emit('GSM8K_ENABLED', get('gsm8k.enabled', False))
@@ -133,6 +134,9 @@ run_gsm8k() {
   if [ "$RECORD_ATTENTION" = "True" ] || [ "$RECORD_ATTENTION" = "true" ]; then
     L_SHAPE_ARGS+=(--record-attention)
   fi
+  if [ "$SPATIOTEMPORAL_RECORD" = "True" ] || [ "$SPATIOTEMPORAL_RECORD" = "true" ]; then
+    L_SHAPE_ARGS+=(--spatiotemporal-record)
+  fi
 
   python3 generate.py \
     --model-id "$MODEL_ID" \
@@ -191,7 +195,7 @@ run_prompt() {
   if [ -f "$PROMPTS_FILE" ]; then
     PROMPT_CMD_ARGS+=(--prompts-file "$PROMPTS_FILE" --prompt-key "$PROMPT_KEY")
   else
-    echo "[WARN] prompts file not found: $PROMPTS_FILE, using DEFAULT_PROMPTS"
+    echo "[INFO] $PROMPTS_FILE not found, using internal default prompts."
   fi
 
   # Build optional L-Shape + attention args
@@ -201,6 +205,9 @@ run_prompt() {
   fi
   if [ "$RECORD_ATTENTION" = "True" ] || [ "$RECORD_ATTENTION" = "true" ]; then
     L_SHAPE_ARGS+=(--record-attention)
+  fi
+  if [ "$SPATIOTEMPORAL_RECORD" = "True" ] || [ "$SPATIOTEMPORAL_RECORD" = "true" ]; then
+    L_SHAPE_ARGS+=(--spatiotemporal-record)
   fi
 
   python3 generate_prompt.py "${PROMPT_CMD_ARGS[@]}" "${L_SHAPE_ARGS[@]}" "${EXTRA_ARGS[@]}"
@@ -223,8 +230,23 @@ run_analysis() {
   echo "════════════════════════════════════════════"
 
   count=0
-  for attn_pt in "$GSM8K_RESULTS_DIR"/attn_weights_*.pt "$PROMPT_RESULTS_DIR"/attn_weights_*.pt; do
-    [ -f "$attn_pt" ] || continue
+  
+  SEARCH_DIRS=()
+  if [ "$RUN_GSM8K" = "True" ] || [ "$RUN_GSM8K" = "true" ] || [ "$MODE" = "gsm8k" ] || [ "$MODE" = "all" ]; then
+    SEARCH_DIRS+=("$GSM8K_RESULTS_DIR")
+  fi
+  if [ "$RUN_PROMPT" = "True" ] || [ "$RUN_PROMPT" = "true" ] || [ "$MODE" = "prompt" ] || [ "$MODE" = "all" ]; then
+    SEARCH_DIRS+=("$PROMPT_RESULTS_DIR")
+  fi
+  
+  # If running in 'analysis' mode only, we might want to analyze all of them
+  if [ "$MODE" = "analysis" ]; then
+    SEARCH_DIRS=("$GSM8K_RESULTS_DIR" "$PROMPT_RESULTS_DIR")
+  fi
+
+  for d in "${SEARCH_DIRS[@]}"; do
+    for attn_pt in "$d"/attn_weights_*.pt; do
+      [ -f "$attn_pt" ] || continue
 
     # Extract prompt_length from companion meta file if available
     meta="${attn_pt%.pt}_meta.json"
@@ -243,7 +265,8 @@ run_analysis() {
       --window-size "$ANALYSIS_WINDOW_SIZE" \
       --output-path "$png"
 
-    count=$((count + 1))
+      count=$((count + 1))
+    done
   done
 
   if [ "$count" -eq 0 ]; then

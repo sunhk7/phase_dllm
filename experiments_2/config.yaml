@@ -14,7 +14,7 @@ paths:
 
 # ── L-Shape Mask Intervention ──
 l_shape_mask:
-  enabled: true
+  enabled: false
   # Window size W: target tokens attend to other targets within |i-j| <= W//2
   dynamic_window_size: 64
 
@@ -23,6 +23,8 @@ attention_recording:
   enabled: true
   # Save post-softmax attention weights for offline analysis
   record_attention: true
+  # Save attention weights from specified layers (0, 15, 32) and steps (0, T/2, T)
+  spatiotemporal_record: true
 
 # ── Generation: GSM8K ──
 gsm8k:
@@ -40,7 +42,7 @@ gsm8k:
 
 # ── Generation: Prompt ──
 prompt:
-  enabled: false
+  enabled: true
   prompts_file: prompts/prompts.txt
   prompt_key: prompt
   batch_size: 1
@@ -62,5 +64,5 @@ runtime:
 
 run:
   gsm8k: true
-  prompt: false
+  prompt: true
   analysis: true

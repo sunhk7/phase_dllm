@@ -65,6 +65,7 @@ def main():
     parser.add_argument("--output-txt", type=str, default=None, help="Optional txt output path")
     parser.add_argument("--dynamic-window-size", type=int, default=None, help="L-Shape mask window size W. Set to enable L-Shape mask intervention.")
     parser.add_argument("--record-attention", action="store_true", help="Record and save post-softmax attention weights for offline analysis.")
+    parser.add_argument("--spatiotemporal-record", action="store_true", help="If active, saves layer 0,15,31 and step 0,T/2,T")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()
 
@@ -94,6 +95,10 @@ def main():
             cfg.dynamic_window_size = args.dynamic_window_size
         if args.record_attention:
             cfg.record_attention = True
+        if args.spatiotemporal_record:
+            cfg.record_attention = True
+            cfg.record_layers = [0, 15, 31]
+            cfg.record_steps = [0, args.steps // 2, args.steps - 1]
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 

@@ -131,7 +131,49 @@ def plot_scatter(
     print(f"[INFO] Saved scatter plot to {output_path}")
     print(f"[INFO] Spearman rho={rho:.4f}, p-value={p_value:.2e}")
 
+def plot_scatter_grid(
+    data_dict: dict,
+    output_path: str,
+    window_size: int,
+):
+    """Create a 3x3 grid of scatter plots for (layer, step) combinations."""
+    sns.set_theme(style="whitegrid", font_scale=1.0)
+    fig, axes = plt.subplots(3, 3, figsize=(15, 12), sharex=True, sharey=True)
 
+    # Sort layers and steps
+    unique_steps = sorted(list(set([k[0] for k in data_dict.keys()])))
+    unique_layers = sorted(list(set([k[1] for k in data_dict.keys()])))
+
+    for i, layer in enumerate(unique_layers):
+        for j, step in enumerate(unique_steps):
+            ax = axes[i, j]
+            if (step, layer) not in data_dict:
+                ax.set_visible(False)
+                continue
+
+            entropies, local_masses = data_dict[(step, layer)]
+            rho, p_value = spearmanr(entropies, local_masses)
+
+            sns.regplot(
+                x=entropies,
+                y=local_masses,
+                scatter_kws={"alpha": 0.3, "s": 5, "color": "#4C72B0"},
+                line_kws={"color": "#C44E52", "linewidth": 2},
+                ax=ax,
+            )
+
+            ax.set_title(f"Layer {layer}, Step {step}\n$\\rho={rho:.3f}$", fontsize=12)
+            
+            if i == 2:
+                ax.set_xlabel("Target-only Entropy (H)")
+            if j == 0:
+                ax.set_ylabel(f"Local Mass (W={window_size})")
+
+    plt.suptitle("Target-Centric Entropy vs. Locality across Layers and Steps", fontsize=16, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[INFO] Saved 3x3 scatter grid to {output_path}")
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze saved attention weights: Target-Centric Entropy vs. Locality"
@@ -163,27 +205,44 @@ def main():
     args = parser.parse_args()
 
     print(f"[INFO] Loading attention weights from {args.attn_path} ...")
-    attn_weights = torch.load(args.attn_path, map_location="cpu")
+    weights_data = torch.load(args.attn_path, map_location="cpu", weights_only=True)
 
-    if not isinstance(attn_weights, torch.Tensor):
-        raise TypeError(
-            f"Expected a torch.Tensor, got {type(attn_weights)}. "
-            "Make sure you saved attention weights with torch.save()."
+    if isinstance(weights_data, torch.Tensor):
+        # Single tensor case
+        print(f"[INFO] Attention weights shape: {weights_data.shape}")
+        print(f"[INFO] prompt_length={args.prompt_length}, window_size={args.window_size}")
+
+        entropies, local_masses = analyze_target_attention(
+            weights_data, args.prompt_length, args.window_size
         )
 
-    print(f"[INFO] Attention weights shape: {attn_weights.shape}")
-    print(f"[INFO] prompt_length={args.prompt_length}, window_size={args.window_size}")
-
-    entropies, local_masses = analyze_target_attention(
-        attn_weights, args.prompt_length, args.window_size
-    )
-
-    print(
-        f"[INFO] Analyzed {len(entropies)} target token data points "
-        f"(entropy range: [{entropies.min():.4f}, {entropies.max():.4f}])"
-    )
-
-    plot_scatter(entropies, local_masses, args.output_path, args.window_size)
+        print(
+            f"[INFO] Analyzed {len(entropies)} target token data points "
+            f"(entropy range: [{entropies.min():.4f}, {entropies.max():.4f}])"
+        )
+        plot_scatter(entropies, local_masses, args.output_path, args.window_size)
+    
+    elif isinstance(weights_data, dict):
+        # Multi-layer/step case
+        print("[INFO] Detected dict of attention weights (Spatiotemporal Analysis).")
+        parsed_data = {}
+        for key, tensor in weights_data.items():
+            # key looks like "step_X_layer_Y"
+            parts = key.split("_")
+            step = int(parts[1])
+            layer = int(parts[3])
+            
+            ents, masses = analyze_target_attention(tensor, args.prompt_length, args.window_size)
+            parsed_data[(step, layer)] = (ents, masses)
+            
+        print(f"[INFO] Computed entropies and masses for {len(parsed_data)} combinations.")
+        plot_scatter_grid(parsed_data, args.output_path, args.window_size)
+    
+    else:
+        raise TypeError(
+            f"Expected a torch.Tensor or dict, got {type(weights_data)}. "
+            "Make sure you saved attention weights with torch.save()."
+        )
 
 
 if __name__ == "__main__":
