@@ -127,6 +127,10 @@ def main():
         input_ids = encoded_outputs['input_ids'].to(device)
         attention_mask = encoded_outputs['attention_mask'].to(device)
 
+        # Set prompt_length on config BEFORE generation
+        prompt_len = input_ids.shape[1]
+        model.config.prompt_length = prompt_len
+
         dynamics_path = os.path.join(dataset_results_dir, f"prompt_dynamics_{start:05d}_{end - 1:05d}.npy")
         
         out = generate(
@@ -146,10 +150,7 @@ def main():
         )
         output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
 
-        # Set prompt_length on config and save attention weights
-        prompt_len = input_ids.shape[1]
-        model.config.prompt_length = prompt_len
-
+        # Save attention weights if recording is enabled
         if args.record_attention:
             _collect_and_save_attention_weights(
                 model, dataset_results_dir,

@@ -28,7 +28,7 @@ attention_recording:
 gsm8k:
   enabled: true
   split: test
-  max_samples: 10
+  max_samples: 3
   batch_size: 1
   steps: 128
   gen_length: 128

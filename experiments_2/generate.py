@@ -12,10 +12,20 @@ from model.modeling_llada import LLaDAModelLM
 
 
 def _iter_attention_modules(model):
-    if not hasattr(model, "model") or not hasattr(model.model, "transformer"):
+    # Depending on how the model is wrapped, get the LLaDAModel inside
+    transformer = None
+    if hasattr(model, "transformer"):
+        transformer = model.transformer
+    elif hasattr(model, "model") and hasattr(model.model, "transformer"):
+        # standard HF wrapper
+        transformer = model.model.transformer
+    elif hasattr(model, "model") and hasattr(model.model, "blocks"):
+        # Custom wrapper
+        transformer = model.model
+
+    if transformer is None:
         return []
 
-    transformer = model.model.transformer
     if hasattr(transformer, "blocks"):
         return list(transformer.blocks)
 
@@ -288,6 +298,10 @@ def main():
         input_ids = encoded_outputs["input_ids"].to(device)
         attention_mask = encoded_outputs["attention_mask"].to(device)
 
+        # Set prompt_length on config BEFORE generation so L-Shape mask can use it
+        prompt_len = input_ids.shape[1]
+        model.config.prompt_length = prompt_len
+
         dynamics_path = os.path.join(dataset_results_dir, f"gsm8k_dynamics_{start:05d}_{end - 1:05d}.npy")
         out = generate(
             model,
@@ -305,10 +319,6 @@ def main():
             local_half_window=args.local_half_window,
         )
         output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
-
-        # Set prompt_length on config (needed by L-Shape mask, also saved in meta)
-        prompt_len = input_ids.shape[1]
-        model.config.prompt_length = prompt_len
 
         # Save attention weights if recording is enabled
         if args.record_attention:
