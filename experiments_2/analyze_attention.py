@@ -111,6 +111,7 @@ def plot_scatter(
     ax.set_xlabel("Target-only Information Entropy (H)", fontsize=13)
     ax.set_ylabel(f"Target Local Attention Mass (S_local, W={window_size})", fontsize=13)
     ax.set_title("Target-Centric Entropy vs. Locality", fontsize=15, fontweight="bold")
+    ax.set_ylim(-0.05, 1.05)
 
     # Display Spearman correlation
     textstr = f"Spearman ρ = {rho:.4f}\np-value = {p_value:.2e}"
@@ -163,6 +164,7 @@ def plot_scatter_grid(
             )
 
             ax.set_title(f"Layer {layer}, Step {step}\n$\\rho={rho:.3f}$", fontsize=12)
+            ax.set_ylim(-0.05, 1.05)
             
             if i == 2:
                 ax.set_xlabel("Target-only Entropy (H)")
@@ -174,6 +176,58 @@ def plot_scatter_grid(
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"[INFO] Saved 3x3 scatter grid to {output_path}")
+
+def plot_mass_distribution_grid(
+    data_dict: dict,
+    output_path: str,
+    window_size: int,
+):
+    """Create a 3x3 grid of density plots (KDE/histogram) for local masses."""
+    sns.set_theme(style="whitegrid", font_scale=1.0)
+    fig, axes = plt.subplots(3, 3, figsize=(15, 12), sharex=True, sharey=True)
+
+    # Sort layers and steps
+    unique_steps = sorted(list(set([k[0] for k in data_dict.keys()])))
+    unique_layers = sorted(list(set([k[1] for k in data_dict.keys()])))
+
+    for i, layer in enumerate(unique_layers):
+        for j, step in enumerate(unique_steps):
+            ax = axes[i, j]
+            if (step, layer) not in data_dict:
+                ax.set_visible(False)
+                continue
+
+            _, local_masses = data_dict[(step, layer)]
+
+            sns.histplot(
+                local_masses, 
+                bins=30, 
+                kde=True, 
+                color="#2CA02C", 
+                stat="density",
+                alpha=0.4,
+                ax=ax,
+                edgecolor="None"
+            )
+            
+            mean_val = local_masses.mean()
+            ax.axvline(mean_val, color='red', linestyle='--', linewidth=1.5, label=f"Mean: {mean_val:.2f}")
+            ax.legend(loc='upper left', fontsize=9)
+
+            ax.set_title(f"Layer {layer}, Step {step}", fontsize=12)
+            ax.set_xlim(-0.05, 1.05)
+            
+            if i == 2:
+                ax.set_xlabel(f"Local Mass (W={window_size})")
+            if j == 0:
+                ax.set_ylabel("Density")
+
+    plt.suptitle("Distribution of Target Local Attention Mass across Layers and Steps", fontsize=16, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[INFO] Saved 3x3 distribution grid to {output_path}")
+
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze saved attention weights: Target-Centric Entropy vs. Locality"
@@ -236,7 +290,14 @@ def main():
             parsed_data[(step, layer)] = (ents, masses)
             
         print(f"[INFO] Computed entropies and masses for {len(parsed_data)} combinations.")
+        # 1. Plot scatter grid
         plot_scatter_grid(parsed_data, args.output_path, args.window_size)
+        
+        # 2. Plot distribution grid
+        dist_output = args.output_path.replace("entropy_vs_locality", "local_mass_distribution")
+        if dist_output == args.output_path:
+            dist_output = args.output_path.replace(".png", "_dist.png")
+        plot_mass_distribution_grid(parsed_data, dist_output, args.window_size)
     
     else:
         raise TypeError(
