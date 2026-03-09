@@ -1,0 +1,66 @@
+experiment:
+  name: llada_l_shape_mask_attention_analysis
+  seed: 42
+
+model:
+  model_id: GSAI-ML/LLaDA-8B-Instruct
+  trust_remote_code: true
+  dtype: auto
+
+paths:
+  results_dir: results
+  gsm8k_subdir: gsm8k
+  prompt_subdir: prompt
+
+# ── L-Shape Mask Intervention ──
+l_shape_mask:
+  enabled: true
+  # Window size W: target tokens attend to other targets within |i-j| <= W//2
+  dynamic_window_size: 64
+
+# ── Attention Recording ──
+attention_recording:
+  enabled: true
+  # Save post-softmax attention weights for offline analysis
+  record_attention: true
+
+# ── Generation: GSM8K ──
+gsm8k:
+  enabled: true
+  split: test
+  max_samples: 10
+  batch_size: 1
+  steps: 128
+  gen_length: 128
+  block_length: 128
+  temperature: 0.0
+  cfg_scale: 0.0
+  remasking: low_confidence
+  local_half_window: 32
+
+# ── Generation: Prompt ──
+prompt:
+  enabled: false
+  prompts_file: prompts/prompts.txt
+  prompt_key: prompt
+  batch_size: 1
+  steps: 128
+  gen_length: 128
+  block_length: 128
+  temperature: 0.0
+  cfg_scale: 0.0
+  remasking: low_confidence
+  local_half_window: 32
+
+# ── Offline Analysis ──
+analysis:
+  window_size: 64
+  output_filename: entropy_vs_locality.png
+
+runtime:
+  device: auto
+
+run:
+  gsm8k: true
+  prompt: false
+  analysis: true

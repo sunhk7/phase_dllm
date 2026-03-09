@@ -362,6 +362,25 @@ class ModelConfig():
     See :data:`TrainConfig.precision` instead.
     """
 
+    prompt_length: Optional[int] = None
+    """
+    Number of prompt tokens. Used by L-Shape mask to identify the prompt region.
+    Set at runtime before generation.
+    """
+
+    dynamic_window_size: Optional[int] = None
+    """
+    Window size W for the L-Shape Window Mask. When set, target tokens can only
+    attend to other target tokens within a local window of size W (i.e. |i-j| <= W//2),
+    while always attending to all prompt tokens globally. Set to None to disable.
+    """
+
+    record_attention: bool = False
+    """
+    If True, save the post-softmax attention weights to self.saved_attn_weights
+    in each attention module for offline analysis.
+    """
+
     @property
     def effective_n_kv_heads(self) -> int:
         if self.n_kv_heads is None:

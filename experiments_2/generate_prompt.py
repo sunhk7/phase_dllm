@@ -7,7 +7,7 @@ import os
 
 from transformers import AutoTokenizer, AutoModel
 from model.modeling_llada import LLaDAModelLM
-from generate import generate
+from generate import generate, _collect_and_save_attention_weights
 
 
 DEFAULT_PROMPTS = [
@@ -63,6 +63,8 @@ def main():
     parser.add_argument("--local-half-window", type=int, default=32, help="Local window size for calculating global ratio.")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--output-txt", type=str, default=None, help="Optional txt output path")
+    parser.add_argument("--dynamic-window-size", type=int, default=None, help="L-Shape mask window size W. Set to enable L-Shape mask intervention.")
+    parser.add_argument("--record-attention", action="store_true", help="Record and save post-softmax attention weights for offline analysis.")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()
 
@@ -79,6 +81,13 @@ def main():
         trust_remote_code=True,
         torch_dtype=model_dtype,
     ).to(device).eval()
+
+    # Configure L-Shape mask and attention recording
+    if args.dynamic_window_size is not None:
+        model.config.dynamic_window_size = args.dynamic_window_size
+    if args.record_attention:
+        model.config.record_attention = True
+
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 
     if tokenizer.padding_side != 'left':
@@ -136,6 +145,17 @@ def main():
             local_half_window=args.local_half_window
         )
         output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
+
+        # Set prompt_length on config and save attention weights
+        prompt_len = input_ids.shape[1]
+        model.config.prompt_length = prompt_len
+
+        if args.record_attention:
+            _collect_and_save_attention_weights(
+                model, dataset_results_dir,
+                tag=f"{start:05d}_{end - 1:05d}",
+                prompt_length=prompt_len,
+            )
         
         for local_idx, (prompt, prediction) in enumerate(zip(batch_prompts, output_text)):
             sample_idx = start + local_idx

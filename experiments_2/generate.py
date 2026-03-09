@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import argparse
 import json
 import os
+import math
 
 from transformers import AutoTokenizer, AutoModel
 from datasets import load_dataset
@@ -25,6 +26,38 @@ def _iter_attention_modules(model):
         return modules
 
     return []
+
+
+def _collect_and_save_attention_weights(model, save_dir, tag, prompt_length):
+    """
+    Collect saved_attn_weights from all attention blocks and save to disk.
+    Only the **last layer's** attention weights are saved (most relevant for analysis).
+    """
+    modules = _iter_attention_modules(model)
+    if not modules:
+        return
+
+    # Use the last layer (the one closest to the output)
+    last_module = modules[-1]
+    if not hasattr(last_module, "saved_attn_weights"):
+        return
+
+    attn_weights = last_module.saved_attn_weights  # (batch, heads, seq_len, seq_len)
+    os.makedirs(save_dir, exist_ok=True)
+
+    pt_path = os.path.join(save_dir, f"attn_weights_{tag}.pt")
+    torch.save(attn_weights, pt_path)
+
+    meta_path = os.path.join(save_dir, f"attn_weights_{tag}_meta.json")
+    with open(meta_path, "w") as f:
+        json.dump({"prompt_length": prompt_length, "shape": list(attn_weights.shape)}, f)
+
+    print(f"[ATTN] Saved attention weights {list(attn_weights.shape)} -> {pt_path}")
+
+    # Clear saved weights from all modules to free memory
+    for m in modules:
+        if hasattr(m, "saved_attn_weights"):
+            del m.saved_attn_weights
 
 def add_gumbel_noise(logits, temperature):
     '''
@@ -188,6 +221,8 @@ def main():
     parser.add_argument("--confidence-eos-eot-inf", action="store_true", help="Set EOS/EoT confidence to -inf")
     parser.add_argument("--local-half-window", type=int, default=32, help="Local window size for calculating global ratio.")
     parser.add_argument("--results-dir", type=str, default="results")
+    parser.add_argument("--dynamic-window-size", type=int, default=None, help="L-Shape mask window size W. Set to enable L-Shape mask intervention.")
+    parser.add_argument("--record-attention", action="store_true", help="Record and save post-softmax attention weights for offline analysis.")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()
 
@@ -204,6 +239,13 @@ def main():
         trust_remote_code=True,
         torch_dtype=model_dtype,
     ).to(device).eval()
+
+    # Configure L-Shape mask and attention recording
+    if args.dynamic_window_size is not None:
+        model.config.dynamic_window_size = args.dynamic_window_size
+    if args.record_attention:
+        model.config.record_attention = True
+
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
@@ -263,6 +305,18 @@ def main():
             local_half_window=args.local_half_window,
         )
         output_text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
+
+        # Set prompt_length on config (needed by L-Shape mask, also saved in meta)
+        prompt_len = input_ids.shape[1]
+        model.config.prompt_length = prompt_len
+
+        # Save attention weights if recording is enabled
+        if args.record_attention:
+            _collect_and_save_attention_weights(
+                model, dataset_results_dir,
+                tag=f"{start:05d}_{end - 1:05d}",
+                prompt_length=prompt_len,
+            )
 
         for local_idx, (question, answer, prediction) in enumerate(zip(questions, answers, output_text)):
             sample_idx = start + local_idx
