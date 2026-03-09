@@ -12,23 +12,28 @@ from model.modeling_llada import LLaDAModelLM
 
 
 def _iter_attention_modules(model):
-    # Depending on how the model is wrapped, get the LLaDAModel inside
+    """
+    Safely extract transformer blocks from the model, handling various wrappers.
+    AutoModel returns LLaDAModelLM, which has `.model` (LLaDAModel).
+    """
     transformer = None
-    if hasattr(model, "transformer"):
-        transformer = model.transformer
-    elif hasattr(model, "model") and hasattr(model.model, "transformer"):
-        # standard HF wrapper
+    
+    # 1. Unpack LLaDAModelLM wrapper if present
+    if hasattr(model, "model") and hasattr(model.model, "transformer"):
         transformer = model.model.transformer
-    elif hasattr(model, "model") and hasattr(model.model, "blocks"):
-        # Custom wrapper
-        transformer = model.model
-
+    # 2. Direct LLaDAModel
+    elif hasattr(model, "transformer"):
+        transformer = model.transformer
+    # 3. Last fallback
+    elif hasattr(model, "blocks") or hasattr(model, "block_groups"):
+        transformer = model
+        
     if transformer is None:
         return []
 
     if hasattr(transformer, "blocks"):
         return list(transformer.blocks)
-
+    
     if hasattr(transformer, "block_groups"):
         modules = []
         for group in transformer.block_groups:
