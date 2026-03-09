@@ -82,11 +82,18 @@ def main():
         torch_dtype=model_dtype,
     ).to(device).eval()
 
-    # Configure L-Shape mask and attention recording
-    if args.dynamic_window_size is not None:
-        model.config.dynamic_window_size = args.dynamic_window_size
-    if args.record_attention:
-        model.config.record_attention = True
+    # Configure L-Shape mask and attention recording for all relevant config objects
+    configs_to_update = [model.config]
+    if hasattr(model, "model") and hasattr(model.model, "config"):
+        configs_to_update.append(model.model.config)
+    if hasattr(model, "transformer") and hasattr(model.transformer, "config"):
+        configs_to_update.append(model.transformer.config)
+
+    for cfg in configs_to_update:
+        if args.dynamic_window_size is not None:
+            cfg.dynamic_window_size = args.dynamic_window_size
+        if args.record_attention:
+            cfg.record_attention = True
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
 
@@ -129,7 +136,8 @@ def main():
 
         # Set prompt_length on config BEFORE generation
         prompt_len = input_ids.shape[1]
-        model.config.prompt_length = prompt_len
+        for cfg in configs_to_update:
+            cfg.prompt_length = prompt_len
 
         dynamics_path = os.path.join(dataset_results_dir, f"prompt_dynamics_{start:05d}_{end - 1:05d}.npy")
         
