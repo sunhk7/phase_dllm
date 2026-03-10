@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--remasking", type=str, default="low_confidence", choices=["low_confidence", "random"])
     parser.add_argument("--logits-eos-inf", action="store_true", help="Set EOS logit to -inf")
     parser.add_argument("--confidence-eos-eot-inf", action="store_true", help="Set EOS/EoT confidence to -inf")
-    parser.add_argument("--local-half-window", type=int, default=64, help="Local window size for calculating global ratio.")
+    parser.add_argument("--local-half-window", type=int, default=64, help="Local window size for calculating local ratio.")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()

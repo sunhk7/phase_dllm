@@ -99,7 +99,7 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
     attention_modules = _iter_attention_modules(model) if collect_attention_dynamics else []
     attention_dynamics = [] if attention_modules else None
     for attention_module in attention_modules:
-        attention_module.global_ratio_tracker = []
+        attention_module.local_ratio_tracker = []
         attention_module.local_half_window = local_half_window
         attention_module.context_length = prompt.shape[1]
 
@@ -154,8 +154,8 @@ def generate(model, prompt, attention_mask=None, steps=128, gen_length=128, bloc
             if attention_dynamics is not None:
                 step_ratio = []
                 for attention_module in attention_modules:
-                    if hasattr(attention_module, "global_ratio_tracker") and attention_module.global_ratio_tracker:
-                        value = attention_module.global_ratio_tracker[-1]
+                    if hasattr(attention_module, "local_ratio_tracker") and attention_module.local_ratio_tracker:
+                        value = attention_module.local_ratio_tracker[-1]
                         if isinstance(value, torch.Tensor):
                             value = value.float().cpu().item()
                         else:
@@ -186,7 +186,7 @@ def main():
     parser.add_argument("--remasking", type=str, default="low_confidence", choices=["low_confidence", "random"])
     parser.add_argument("--logits-eos-inf", action="store_true", help="Set EOS logit to -inf")
     parser.add_argument("--confidence-eos-eot-inf", action="store_true", help="Set EOS/EoT confidence to -inf")
-    parser.add_argument("--local-half-window", type=int, default=32, help="Local window size for calculating global ratio.")
+    parser.add_argument("--local-half-window", type=int, default=32, help="Local window size for calculating local ratio.")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     args = parser.parse_args()

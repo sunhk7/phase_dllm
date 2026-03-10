@@ -638,7 +638,7 @@ class LLaDABlock(nn.Module):
         Computes scaled dot product attention on query, key and value tensors, using an optional
         attention mask if passed, and applying dropout if a probability greater than 0.0 is specified.
         """
-        track_global_ratio = hasattr(self, "global_ratio_tracker")
+        track_local_ratio = hasattr(self, "local_ratio_tracker")
 
         # Check if L-Shape masking or attention recording is requested
         use_l_shape_mask = (
@@ -648,7 +648,7 @@ class LLaDABlock(nn.Module):
         use_record_attention = getattr(self.config, "record_attention", False)
 
         # Use manual attention path when any analysis feature is active
-        use_manual_path = track_global_ratio or use_l_shape_mask or use_record_attention
+        use_manual_path = track_local_ratio or use_l_shape_mask or use_record_attention
 
         if self.flash_attn_func is not None and attn_mask is None and not use_manual_path:
             r = self.flash_attn_func(
@@ -696,29 +696,39 @@ class LLaDABlock(nn.Module):
                 if use_record_attention:
                     self.saved_attn_weights = attn_weights.detach().cpu()
 
-                # --- Global ratio tracking (existing logic) ---
-                if track_global_ratio:
+                # --- Local ratio tracking (S_local) ---
+                if track_local_ratio:
                     local_half_window = getattr(self, "local_half_window", 32)
-                    query_len, key_len = attn_weights.shape[-2], attn_weights.shape[-1]
-                    local_window_mask = torch.ones(
-                        (query_len, key_len), device=attn_weights.device, dtype=attn_weights.dtype
-                    )
-                    local_window_mask = torch.triu(local_window_mask, diagonal=-local_half_window)
-                    local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
-                    global_window_mask = 1.0 - local_window_mask
-
                     context_length = getattr(self, "context_length", None)
+                    query_len, key_len = attn_weights.shape[-2], attn_weights.shape[-1]
+                    
                     if context_length is not None and context_length < query_len:
-                        sliced_attn_weights = attn_weights[:, :, context_length:, :]
-                        sliced_global_mask = global_window_mask.view(1, 1, query_len, key_len)[:, :, context_length:, :]
-                        global_ratio = (sliced_attn_weights * sliced_global_mask).sum(dim=-1).mean()
+                        target_attn = attn_weights[:, :, context_length:, :]
+                        
+                        target_attn_clone = target_attn.clone()
+                        target_attn_clone[:, :, :, :context_length] = 0.0
+                        
+                        row_sums = target_attn_clone.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                        P_target = target_attn_clone / row_sums
+                        
+                        num_targets = query_len - context_length
+                        local_mask = torch.zeros((num_targets, key_len), device=P_target.device, dtype=P_target.dtype)
+                        
+                        for i in range(num_targets):
+                            abs_idx = context_length + i
+                            lo = max(abs_idx - local_half_window, context_length)
+                            hi = min(abs_idx + local_half_window + 1, key_len)
+                            local_mask[i, lo:hi] = 1.0
+                        
+                        local_masses = (P_target * local_mask.view(1, 1, num_targets, key_len)).sum(dim=-1)
+                        local_ratio = local_masses.mean()
                     else:
-                        global_ratio = (attn_weights * global_window_mask.view(1, 1, query_len, key_len)).sum(dim=-1).mean()
-
-                    self.global_ratio_tracker.append(global_ratio.detach())
-
-                    # Cleanup
-                    del local_window_mask, global_window_mask
+                        local_window_mask = torch.ones((query_len, key_len), device=attn_weights.device, dtype=attn_weights.dtype)
+                        local_window_mask = torch.triu(local_window_mask, diagonal=-local_half_window)
+                        local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
+                        local_ratio = (attn_weights * local_window_mask.view(1, 1, query_len, key_len)).sum(dim=-1).mean()
+                        
+                    self.local_ratio_tracker.append(local_ratio.detach())
 
                 if dropout_p > 0.0:
                     attn_weights = F.dropout(attn_weights, p=dropout_p, training=self.training)

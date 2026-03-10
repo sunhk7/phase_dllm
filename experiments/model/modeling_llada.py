@@ -638,9 +638,9 @@ class LLaDABlock(nn.Module):
         Computes scaled dot product attention on query, key and value tensors, using an optional
         attention mask if passed, and applying dropout if a probability greater than 0.0 is specified.
         """
-        track_global_ratio = hasattr(self, "global_ratio_tracker")
+        track_local_ratio = hasattr(self, "local_ratio_tracker")
 
-        if self.flash_attn_func is not None and attn_mask is None and not track_global_ratio:
+        if self.flash_attn_func is not None and attn_mask is None and not track_local_ratio:
             r = self.flash_attn_func(
                 q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), dropout_p=dropout_p, causal=False
             )
@@ -655,43 +655,57 @@ class LLaDABlock(nn.Module):
                 k = k.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
                 v = v.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
 
-            if track_global_ratio:
-                # Track how much attention mass falls outside a local window W=64 (diagonal +/- 32).
+            if track_local_ratio:
+                # Track Target Local Attention Mass (S_local), matching analyze_attention.py
                 attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(q.size(-1))
                 if attn_mask is not None:
                     attn_scores = attn_scores + attn_mask
                 attn_weights = F.softmax(attn_scores, dim=-1, dtype=torch.float32)
 
                 local_half_window = getattr(self, "local_half_window", 32)
-                query_len, key_len = attn_weights.shape[-2], attn_weights.shape[-1]
-                local_window_mask = torch.ones(
-                    (query_len, key_len), device=attn_weights.device, dtype=attn_weights.dtype
-                )
-                local_window_mask = torch.triu(local_window_mask, diagonal=-local_half_window)
-                local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
-                
                 context_length = getattr(self, "context_length", None)
-                # Ensure context (prompt) tokens are always treated as local/visible
-                if context_length is not None:
-                    local_window_mask[:, :context_length] = 1.0
-
-                global_window_mask = 1.0 - local_window_mask
-
+                query_len, key_len = attn_weights.shape[-2], attn_weights.shape[-1]
+                
                 if context_length is not None and context_length < query_len:
-                    # Slice queries to focus only on generated tokens (VRAM optimization & accuracy)
-                    sliced_attn_weights = attn_weights[:, :, context_length:, :]
-                    sliced_global_mask = global_window_mask.view(1, 1, query_len, key_len)[:, :, context_length:, :]
-                    global_ratio = (sliced_attn_weights * sliced_global_mask).sum(dim=-1).mean()
-                else:
-                    global_ratio = (attn_weights * global_window_mask.view(1, 1, query_len, key_len)).sum(dim=-1).mean()
+                    # Filter: only query tokens where i >= prompt_length
+                    # Shape: (batch, num_heads, num_target, seq_len)
+                    target_attn = attn_weights[:, :, context_length:, :]
                     
-                self.global_ratio_tracker.append(global_ratio.detach())
+                    # Zero out weights where j < prompt_length (ignore prompt attention)
+                    target_attn_clone = target_attn.clone()
+                    target_attn_clone[:, :, :, :context_length] = 0.0
+                    
+                    # Re-normalize so remaining weights sum to 1.0
+                    row_sums = target_attn_clone.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                    P_target = target_attn_clone / row_sums
+                    
+                    # Create local window mask for the target region ONLY
+                    # target query index maps to absolute index: context_length + i
+                    num_targets = query_len - context_length
+                    local_mask = torch.zeros((num_targets, key_len), device=P_target.device, dtype=P_target.dtype)
+                    
+                    for i in range(num_targets):
+                        abs_idx = context_length + i
+                        lo = max(abs_idx - local_half_window, context_length)
+                        hi = min(abs_idx + local_half_window + 1, key_len)
+                        local_mask[i, lo:hi] = 1.0
+                    
+                    # Compute mean S_local across all targets and heads
+                    # P_target is (B, H, num_target, key_len)
+                    # local_mask is (num_target, key_len)
+                    local_masses = (P_target * local_mask.view(1, 1, num_targets, key_len)).sum(dim=-1)
+                    local_ratio = local_masses.mean()
+                else:
+                    # If there's no context_length separating target from prompt, just do standard window
+                    local_window_mask = torch.ones((query_len, key_len), device=attn_weights.device, dtype=attn_weights.dtype)
+                    local_window_mask = torch.triu(local_window_mask, diagonal=-local_half_window)
+                    local_window_mask = torch.tril(local_window_mask, diagonal=local_half_window)
+                    local_ratio = (attn_weights * local_window_mask.view(1, 1, query_len, key_len)).sum(dim=-1).mean()
+                    
+                self.local_ratio_tracker.append(local_ratio.detach())
 
                 if dropout_p > 0.0:
                     attn_weights = F.dropout(attn_weights, p=dropout_p, training=self.training)
-                
-                # Cleanup huge local matrix before v mul
-                del sliced_attn_weights, sliced_global_mask, local_window_mask, global_window_mask
                 
                 return torch.matmul(attn_weights.to(dtype=v.dtype), v)
 
