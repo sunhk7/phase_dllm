@@ -232,15 +232,20 @@ run_analysis() {
   count=0
   
   SEARCH_DIRS=()
-  if [ "$RUN_GSM8K" = "True" ] || [ "$RUN_GSM8K" = "true" ] || [ "$MODE" = "gsm8k" ] || [ "$MODE" = "all" ]; then
-    SEARCH_DIRS+=("$GSM8K_RESULTS_DIR")
-  fi
-  if [ "$RUN_PROMPT" = "True" ] || [ "$RUN_PROMPT" = "true" ] || [ "$MODE" = "prompt" ] || [ "$MODE" = "all" ]; then
-    SEARCH_DIRS+=("$PROMPT_RESULTS_DIR")
-  fi
-  
-  # If running in 'analysis' mode only, we might want to analyze all of them
-  if [ "$MODE" = "analysis" ]; then
+  if [ "$MODE" = "gsm8k" ]; then
+    SEARCH_DIRS=("$GSM8K_RESULTS_DIR")
+  elif [ "$MODE" = "prompt" ]; then
+    SEARCH_DIRS=("$PROMPT_RESULTS_DIR")
+  elif [ "$MODE" = "all" ]; then
+    # In 'all' mode, scan whichever are enabled in config
+    if [ "$RUN_GSM8K" = "True" ] || [ "$RUN_GSM8K" = "true" ]; then
+      SEARCH_DIRS+=("$GSM8K_RESULTS_DIR")
+    fi
+    if [ "$RUN_PROMPT" = "True" ] || [ "$RUN_PROMPT" = "true" ]; then
+      SEARCH_DIRS+=("$PROMPT_RESULTS_DIR")
+    fi
+  elif [ "$MODE" = "analysis" ]; then
+    # Standalone analysis mode: scan everything
     SEARCH_DIRS=("$GSM8K_RESULTS_DIR" "$PROMPT_RESULTS_DIR")
   fi
 
