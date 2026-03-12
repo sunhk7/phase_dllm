@@ -265,6 +265,14 @@ run_analysis() {
       --window-size "$ANALYSIS_WINDOW_SIZE" \
       --output-path "$png"
 
+    # Also generate Entropy vs Local Ratio scatter grid
+    scatter_png="${attn_pt%.pt}_entropy_vs_locality_grid.png"
+    python3 plot_entropy_vs_locality.py \
+      --attn-path "$attn_pt" \
+      --prompt-length "$PROMPT_LEN" \
+      --window-size "$ANALYSIS_WINDOW_SIZE" \
+      --output-path "$scatter_png"
+
       count=$((count + 1))
     done
   done
