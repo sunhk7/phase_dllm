@@ -27,7 +27,7 @@ def evaluate_shift_simulation(model, valid_samples, w_size, threshold, device):
     new_hard_kls = []
     
     mask_id = 126336
-    micro_batch_size = 4
+    micro_batch_size = 2 # 🔥 Reduced from 4 to 2 (Phase 2 runs 3 models concurrently now)
     eval_positions_per_seq = 64 # Max hard tokens to actually test per sequence
     
     print(f"\n🚀 Running True Gt SHiFT Simulation for w_size={w_size} (Easy Landmark KL Threshold < {threshold})")
@@ -57,6 +57,14 @@ def evaluate_shift_simulation(model, valid_samples, w_size, threshold, device):
             is_hard = (unmasked_kl >= threshold) & is_valid_range
             
             hard_indices = torch.nonzero(is_hard, as_tuple=True)[0].cpu().tolist()
+            
+            # 🔥 CRITICAL FIX: Kill Phase 1 giant variables before spinning up Phase 2!
+            # Python's loop scope was keeping 2GB of Phase 1 tensors alive throughout Phase 2.
+            del global_outputs, global_logits, global_probs
+            del local_outputs, local_logits, local_probs
+            del unmasked_kl
+            # Force PyTorch to release the 2GB+ contiguous chunks back to the allocator
+            torch.cuda.empty_cache()
             
             if len(hard_indices) == 0:
                 continue
