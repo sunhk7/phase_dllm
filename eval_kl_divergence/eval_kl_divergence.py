@@ -68,42 +68,71 @@ def get_dataset_samples(tokenizer, max_length, num_samples):
 
 def evaluate_kl_divergence(model, valid_samples, local_window, device):
     """
-    Performs dual forward pass mapping (Global vs target Local Window).
-    Returns arrays suitable for CDF plotting.
+    Performs true "Leave-One-Out" masked forward pass mapping.
+    For each valid sequence, we randomly select `eval_positions_per_seq` tokens,
+    mask them one-by-one, and evaluate local vs global KL divergence specifically on those guessed distributions.
     """
     kl_divergences = []
-
-    print(f"Running evaluation for local_window={local_window}...")
+    
+    mask_id = 126336
+    eval_positions_per_seq = 64 # Keep it reasonably small to avoid extremely long execution times (64 tokens per seq)
+    micro_batch_size = 4 # Safe for 8B models to prevent OOM
+    
+    print(f"Running REAL MASKED evaluation for local_window={local_window}...")
+    
+    if isinstance(local_window, tuple):
+        w_size, keep_first_k = local_window
+    else:
+        w_size, keep_first_k = local_window, 0
+        
+    # Valid indices to randomly pick for masking (must not be in prompt, must have full window)
+    max_length = valid_samples[0].shape[-1]
+    start_idx = max(w_size, keep_first_k)
+    possible_indices = list(range(start_idx, max_length - w_size))
+    
     with torch.no_grad():
         for input_ids in tqdm(valid_samples, desc=f"Evaluating w={local_window}"):
-            input_ids = input_ids.unsqueeze(0).to(device)
+            # Randomly select positions to mask
+            np.random.seed(int(input_ids[10].item())) # arbitrary deterministic seed per string
+            chosen_indices = np.random.choice(possible_indices, size=eval_positions_per_seq, replace=False)
             
-            # Global forward
-            global_outputs = model(input_ids=input_ids, local_window_size=None)
-            global_logits = global_outputs.logits if hasattr(global_outputs, 'logits') else global_outputs[0]
-            global_probs = F.softmax(global_logits, dim=-1)
+            # Create a batch of masked sequences
+            # shape: (eval_positions_per_seq, max_length)
+            masked_inputs = input_ids.unsqueeze(0).repeat(eval_positions_per_seq, 1)
+            for b_idx, target_idx in enumerate(chosen_indices):
+                masked_inputs[b_idx, target_idx] = mask_id
             
-            # Local forward
-            local_outputs = model(input_ids=input_ids, local_window_size=local_window)
-            local_logits = local_outputs.logits if hasattr(local_outputs, 'logits') else local_outputs[0]
-            local_probs = F.softmax(local_logits, dim=-1)
+            masked_inputs = masked_inputs.to(device)
             
-            # PyTorch F.kl_div(input, target) computes KL(target || input)
-            # We want KL(local || global), so target is local_probs, and input is global_probs.log()
-            kl = F.kl_div(global_probs.log(), local_probs, reduction='none').sum(dim=-1)
-            kl = kl.squeeze(0).cpu().to(torch.float32).numpy() # shape: (max_length,)
-            
-            # Support tuple-based configuration (window_size, keep_first_k)
-            if isinstance(local_window, tuple):
-                w_size, keep_first_k = local_window
-            else:
-                w_size, keep_first_k = local_window, 0
-            
-            # We skip the KL divergence calculation for the prompt/sink tokens themselves, 
-            # and we also skip the last `w_size` tokens due to chopped right-side windows.
-            start_idx = max(w_size, keep_first_k)
-            valid_kl = kl[start_idx:-w_size]
-            kl_divergences.extend(valid_kl.tolist())
+            # Mini-batch evaluation to prevent OOM
+            kl_for_this_seq = []
+            for b_start in range(0, eval_positions_per_seq, micro_batch_size):
+                b_end = min(b_start + micro_batch_size, eval_positions_per_seq)
+                batch_segments = masked_inputs[b_start:b_end] # (micro_batch_size, max_length)
+                
+                # Global forward
+                global_outputs = model(input_ids=batch_segments, local_window_size=None)
+                global_logits = global_outputs.logits if hasattr(global_outputs, 'logits') else global_outputs[0]
+                global_probs = F.softmax(global_logits, dim=-1)
+                
+                # Local forward
+                local_outputs = model(input_ids=batch_segments, local_window_size=local_window)
+                local_logits = local_outputs.logits if hasattr(local_outputs, 'logits') else local_outputs[0]
+                local_probs = F.softmax(local_logits, dim=-1)
+                
+                # Only compute KL divergence for the EXACT token position that was MASKED
+                for i, relative_idx in enumerate(range(b_start, b_end)):
+                    target_idx = chosen_indices[relative_idx]
+                    
+                    # global_probs[i, target_idx] is shape (vocab_size,)
+                    p_global = global_probs[i, target_idx]
+                    p_local = local_probs[i, target_idx]
+                    
+                    # KL(local || global) -> target is local_probs, input is global_probs.log()
+                    kl = F.kl_div(p_global.log(), p_local, reduction='sum').item()
+                    kl_for_this_seq.append(kl)
+                    
+            kl_divergences.extend(kl_for_this_seq)
 
     print(f"Collected {len(kl_divergences)} valid KL divergence values for local_window={local_window}.")
     
