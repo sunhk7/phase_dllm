@@ -644,8 +644,14 @@ class LLaDABlock(nn.Module):
         if local_window_size is not None:
             if isinstance(local_window_size, (tuple, list)):
                 w_size, keep_first_k = local_window_size
+                global_mask = None
+            elif isinstance(local_window_size, dict):
+                w_size = local_window_size.get('w_size', 0)
+                keep_first_k = local_window_size.get('keep_first_k', 0)
+                global_mask = local_window_size.get('global_mask', None)
             else:
                 w_size, keep_first_k = local_window_size, 0
+                global_mask = None
 
             query_len, key_len = q.shape[-2], k.shape[-2]
             local_mask = torch.ones((query_len, key_len), dtype=torch.bool, device=q.device)
@@ -654,6 +660,10 @@ class LLaDABlock(nn.Module):
             
             if keep_first_k > 0:
                 local_mask[:, :keep_first_k] = True
+                
+            if global_mask is not None:
+                # Force specific dynamic tokens (landmarks) to be globally visible unconditionally
+                local_mask[:, global_mask] = True
             
             local_bias = torch.zeros_like(local_mask, dtype=q.dtype)
             local_bias.masked_fill_(~local_mask, float('-inf'))

@@ -15,7 +15,7 @@ for i in "${!CONFIGS[@]}"; do
     echo "▶️ Launching Window=$CONFIG on GPU $GPU_ID in the background..."
     
     # Run independently and send to background
-    CUDA_VISIBLE_DEVICES=$GPU_ID python eval_kl_divergence.py --window "$CONFIG" &
+    CUDA_VISIBLE_DEVICES=$GPU_ID python eval_kl_divergence.py --window "$CONFIG" --pos_id $i &
     
     # Store process ID
     PIDS+=($!)
