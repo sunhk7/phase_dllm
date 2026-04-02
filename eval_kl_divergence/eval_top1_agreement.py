@@ -48,8 +48,8 @@ def get_dataset_samples(tokenizer, max_length, num_samples):
             if len(valid_samples) == num_samples:
                 break
                 
-    os.makedirs("results", exist_ok=True)
-    with open(f"results/eval_samples_maxlen_{max_length}.json", "w", encoding="utf-8") as f:
+    os.makedirs("results/eval_top1_agreement", exist_ok=True)
+    with open(f"results/eval_top1_agreement/eval_samples_maxlen_{max_length}.json", "w", encoding="utf-8") as f:
         json.dump(valid_texts, f, ensure_ascii=False, indent=2)
     return valid_samples
 
@@ -114,8 +114,8 @@ def plot_agreement_bar_chart(results_dict, max_length):
     plt.ylabel("Top-1 Match Accuracy (%)")
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     
-    os.makedirs("results", exist_ok=True)
-    out_path = f"results/top1_agreement_comparison_maxlen_{max_length}.png"
+    os.makedirs("results/eval_top1_agreement", exist_ok=True)
+    out_path = f"results/eval_top1_agreement/top1_agreement_comparison_maxlen_{max_length}.png"
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     print(f"Saved Top-1 Agreement Chart to {out_path}")
 

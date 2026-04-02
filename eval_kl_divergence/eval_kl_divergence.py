@@ -59,10 +59,10 @@ def get_dataset_samples(tokenizer, max_length, num_samples):
     if len(valid_samples) < num_samples:
         print(f"Warning: Only found {len(valid_samples)} samples of length {max_length}")
         
-    os.makedirs("results", exist_ok=True)
-    with open(f"results/eval_samples_maxlen_{max_length}.json", "w", encoding="utf-8") as f:
+    os.makedirs("results/eval_kl_divergence", exist_ok=True)
+    with open(f"results/eval_kl_divergence/eval_samples_maxlen_{max_length}.json", "w", encoding="utf-8") as f:
         json.dump(valid_texts, f, ensure_ascii=False, indent=2)
-    print(f"Saved the extracted text samples to results/eval_samples_maxlen_{max_length}.json")
+    print(f"Saved the extracted text samples to results/eval_kl_divergence/eval_samples_maxlen_{max_length}.json")
     
     return valid_samples
 
@@ -142,10 +142,10 @@ def evaluate_kl_divergence(model, valid_samples, local_window, device):
     # Calculate CDF
     p = 1.0 * np.arange(len(sorted_kl)) / (len(sorted_kl) - 1)
     
-    os.makedirs("results", exist_ok=True)
+    os.makedirs("results/eval_kl_divergence", exist_ok=True)
     # create a safe filesystem string for file naming
     safe_name = str(local_window).replace(" ", "").replace(",", "_").replace("(", "").replace(")", "")
-    with open(f"results/kl_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
+    with open(f"results/eval_kl_divergence/kl_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
         json.dump(kl_divergences.tolist(), f)
     
     return sorted_kl, p
@@ -170,8 +170,8 @@ def plot_multiple_cdf(results_dict, max_length):
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.7)
     
-    os.makedirs("results", exist_ok=True)
-    out_path = f"results/kl_divergence_cdf_comparison_maxlen_{max_length}.png"
+    os.makedirs("results/eval_kl_divergence", exist_ok=True)
+    out_path = f"results/eval_kl_divergence/kl_divergence_cdf_comparison_maxlen_{max_length}.png"
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     print(f"Saved comparison CDF plot to {out_path}")
 
