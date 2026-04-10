@@ -6,16 +6,10 @@ echo "🚀 Starting 8-GPU SHiFT Simulation Grid Search..."
 # Create log directory before bash attempts to redirect stdout
 mkdir -p results/eval_shift_simulation
 
-# 前 4 张卡跑严苛的 Gt (0.01)，后 4 张卡跑适中的 Gt (0.05)。各自涵盖 16->128 的窗口跨度测试！
+
 CONFIGS=(
   "16:0.01"   # GPU 0: Window 16, Thresh 0.01
   "32:0.01"   # GPU 1: Window 32, Thresh 0.01
-  "64:0.01"   # GPU 2: Window 64, Thresh 0.01
-  "128:0.01"  # GPU 3: Window 128, Thresh 0.01
-  "16:0.05"   # GPU 4: Window 16, Thresh 0.05
-  "32:0.05"   # GPU 5: Window 32, Thresh 0.05
-  "64:0.05"   # GPU 6: Window 64, Thresh 0.05
-  "128:0.05"  # GPU 7: Window 128, Thresh 0.05
 )
 
 PIDS=()
@@ -40,3 +34,7 @@ for pid in "${PIDS[@]}"; do
 done
 
 echo "✅ 8-GPU Ablation Grid Search Completed! All artifacts and plots are saved individually per condition."
+
+echo "📊 Rendering 2x1 Top-1 Accuracy Subplots..."
+python eval_shift_gt_simulation.py --plot_only
+echo "🎉 Comprehensive Analysis Complete!"
