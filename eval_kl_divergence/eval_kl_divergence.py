@@ -122,14 +122,14 @@ def evaluate_divergences(model, valid_samples, local_window, device, pos_id=0):
     
     # Save isolated arrays to structurally separated subdirectories
     os.makedirs("results/eval_kl_divergence/kl", exist_ok=True)
-    os.makedirs("results/eval_kl_divergence/jsd", exist_ok=True)
+    os.makedirs("results/eval_kl_divergence/js", exist_ok=True)
     
     safe_name = str(local_window).replace(" ", "").replace(",", "_").replace("(", "").replace(")", "")
     
     with open(f"results/eval_kl_divergence/kl/kl_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
         json.dump(kl_divergences, f)
         
-    with open(f"results/eval_kl_divergence/jsd/js_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
+    with open(f"results/eval_kl_divergence/js/js_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
         json.dump(js_divergences, f)
         
 def plot_metric_cdf(metric="kl", max_length=1024):
@@ -200,7 +200,7 @@ def main():
     if args.plot_only:
         print("\nPlot Only mode activated. Aggregating all KL and JS structural directories...")
         plot_metric_cdf(metric="kl", max_length=max_length)
-        plot_metric_cdf(metric="jsd", max_length=max_length)
+        plot_metric_cdf(metric="js", max_length=max_length)
         return
         
     if not args.window:
