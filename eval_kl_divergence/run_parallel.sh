@@ -2,7 +2,7 @@
 
 # Configuration
 # This will map these 4 specific window configurations to GPU 0, 1, 2, and 3
-CONFIGS=("16" "32" "64" "16,64")
+CONFIGS=("16" "32" "16,64")
 PIDS=()
 
 echo "🚀 Starting Parallel KL Divergence Evaluation on Multiple GPUs..."

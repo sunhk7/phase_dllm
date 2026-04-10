@@ -57,8 +57,9 @@ def get_dataset_samples(tokenizer, max_length, num_samples, pos_id=0):
     
     return valid_samples
 
-def evaluate_kl_divergence(model, valid_samples, local_window, device, pos_id=0):
+def evaluate_divergences(model, valid_samples, local_window, device, pos_id=0):
     kl_divergences = []
+    js_divergences = []
     
     mask_id = 126336
     eval_positions_per_seq = 64
@@ -85,6 +86,8 @@ def evaluate_kl_divergence(model, valid_samples, local_window, device, pos_id=0)
             masked_inputs = masked_inputs.to(device)
             
             kl_for_this_seq = []
+            js_for_this_seq = []
+            
             for b_start in range(0, eval_positions_per_seq, micro_batch_size):
                 b_end = min(b_start + micro_batch_size, eval_positions_per_seq)
                 batch_segments = masked_inputs[b_start:b_end]
@@ -102,31 +105,50 @@ def evaluate_kl_divergence(model, valid_samples, local_window, device, pos_id=0)
                     p_global = global_probs[i, target_idx]
                     p_local = local_probs[i, target_idx]
                     
+                    # 1. KL Divergence (Asymmetrical)
                     kl = F.kl_div(p_global.log(), p_local, reduction='sum').item()
+                    
+                    # 2. JS Divergence (Symmetrical & Smoothed)
+                    m = 0.5 * (p_global + p_local)
+                    kl_pm = F.kl_div(m.log(), p_global, reduction='sum')
+                    kl_qm = F.kl_div(m.log(), p_local, reduction='sum')
+                    js = 0.5 * (kl_pm + kl_qm).item()
+                    
                     kl_for_this_seq.append(kl)
+                    js_for_this_seq.append(js)
                     
             kl_divergences.extend(kl_for_this_seq)
+            js_divergences.extend(js_for_this_seq)
     
-    os.makedirs("results/eval_kl_divergence", exist_ok=True)
+    # Save isolated arrays to structurally separated subdirectories
+    os.makedirs("results/eval_kl_divergence/kl", exist_ok=True)
+    os.makedirs("results/eval_kl_divergence/jsd", exist_ok=True)
+    
     safe_name = str(local_window).replace(" ", "").replace(",", "_").replace("(", "").replace(")", "")
-    with open(f"results/eval_kl_divergence/kl_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
+    
+    with open(f"results/eval_kl_divergence/kl/kl_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
         json.dump(kl_divergences, f)
         
-def plot_multiple_cdf(max_length=1024):
-    target_dir = "results/eval_kl_divergence"
+    with open(f"results/eval_kl_divergence/jsd/js_divergences_window_{safe_name}.json", "w", encoding="utf-8") as f:
+        json.dump(js_divergences, f)
+        
+def plot_metric_cdf(metric="kl", max_length=1024):
+    target_dir = f"results/eval_kl_divergence/{metric}"
     if not os.path.exists(target_dir):
-        print(f"Directory {target_dir} not found. Have you run the evaluations?")
+        print(f"Directory {target_dir} not found. Have you executed the parallel evaluation sweeps?")
         return
 
-    json_files = [f for f in os.listdir(target_dir) if f.startswith("kl_divergences_window_") and f.endswith(".json")]
+    prefix = f"{metric}_divergences_window_"
+    json_files = [f for f in os.listdir(target_dir) if f.startswith(prefix) and f.endswith(".json")]
+    
     if len(json_files) == 0:
-        print("No evaluation JSON files found.")
+        print(f"No {metric.upper()} JSON files found in {target_dir}")
         return
         
     plt.figure(figsize=(10, 6))
     
     for jfile in sorted(json_files):
-        config_str = jfile.replace("kl_divergences_window_", "").replace(".json", "")
+        config_str = jfile.replace(prefix, "").replace(".json", "")
         if "_" in config_str:
             parts = config_str.split("_")
             label = f"Window {parts[0]}, Sink {parts[1]}"
@@ -134,27 +156,34 @@ def plot_multiple_cdf(max_length=1024):
             label = f"Window {config_str}"
             
         with open(os.path.join(target_dir, jfile), "r", encoding="utf-8") as f:
-            kl_divergences = json.load(f)
+            divergences = json.load(f)
             
-        kl_divergences = np.array(kl_divergences)
-        sorted_kl = np.sort(kl_divergences)
+        divergences = np.array(divergences)
+        sorted_div = np.sort(divergences)
         
-        p = 1.0 * np.arange(len(sorted_kl)) / max(len(sorted_kl) - 1, 1)
-        plt.plot(sorted_kl, p, label=label, linewidth=2)
+        p = 1.0 * np.arange(len(sorted_div)) / max(len(sorted_div) - 1, 1)
+        plt.plot(sorted_div, p, label=label, linewidth=2)
         
     plt.xlim(0, 0.1)
     plt.ylim(0, 1.0)
-    plt.axvline(x=0.01, color='red', linestyle='--', label='Threshold (0.01)')
     
-    plt.title(f"CDF of KL Divergence between Local and Global Attention (maxlen={max_length})")
-    plt.xlabel("KL Divergence")
+    if metric == "kl":
+        plt.axvline(x=0.01, color='red', linestyle='--', label='KL=0.01 Threshold')
+        plt.title(f"CDF of KL Divergence between Local and Global Attention (maxlen={max_length})")
+        plt.xlabel("KL Divergence Penalty")
+        out_path = f"results/eval_kl_divergence/kl_divergence_cdf_comparison_maxlen_{max_length}.png"
+    else:
+        plt.axvline(x=0.01, color='red', linestyle='--', label='JSD=0.01 Threshold')
+        plt.title(f"CDF of Jensen-Shannon Divergence between Local and Global (maxlen={max_length})")
+        plt.xlabel("Jensen-Shannon Divergence Penalty")
+        out_path = f"results/eval_kl_divergence/js_divergence_cdf_comparison_maxlen_{max_length}.png"
+        
     plt.ylabel("Cumulative Probability")
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.7)
     
-    out_path = f"{target_dir}/kl_divergence_cdf_comparison_maxlen_{max_length}.png"
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
-    print(f"Saved aggregated comparison CDF plot to {out_path}")
+    print(f"Saved aggregated {metric.upper()} comparison CDF plot to \033[1;32m{out_path}\033[0m")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -169,8 +198,9 @@ def main():
     max_length = 1024
     
     if args.plot_only:
-        print("\nPlot Only mode activated. Loading existing artifacts for aggregation...")
-        plot_multiple_cdf(max_length=max_length)
+        print("\nPlot Only mode activated. Aggregating all KL and JS structural directories...")
+        plot_metric_cdf(metric="kl", max_length=max_length)
+        plot_metric_cdf(metric="jsd", max_length=max_length)
         return
         
     if not args.window:
@@ -198,7 +228,7 @@ def main():
     
     valid_samples = get_dataset_samples(tokenizer, max_length, args.num_samples, pos_id=args.pos_id)
     
-    evaluate_kl_divergence(model, valid_samples, local_window=w, device=args.device, pos_id=args.pos_id)
+    evaluate_divergences(model, valid_samples, local_window=w, device=args.device, pos_id=args.pos_id)
 
 if __name__ == "__main__":
     main()
