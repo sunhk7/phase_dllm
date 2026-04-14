@@ -171,12 +171,12 @@ def plot_metric_cdf(metric="kl", max_length=1024):
         plt.axvline(x=0.01, color='red', linestyle='--', label='KL=0.01 Threshold')
         plt.title(f"CDF of KL Divergence between Local and Global Attention (maxlen={max_length})")
         plt.xlabel("KL Divergence Penalty")
-        out_path = f"results/eval_kl_divergence/kl_divergence_cdf_comparison_maxlen_{max_length}.png"
+        out_path = f"results/eval_kl_divergence/{metric}/kl_divergence_cdf_comparison_maxlen_{max_length}.png"
     else:
         plt.axvline(x=0.01, color='red', linestyle='--', label='JSD=0.01 Threshold')
         plt.title(f"CDF of Jensen-Shannon Divergence between Local and Global (maxlen={max_length})")
         plt.xlabel("Jensen-Shannon Divergence Penalty")
-        out_path = f"results/eval_kl_divergence/js_divergence_cdf_comparison_maxlen_{max_length}.png"
+        out_path = f"results/eval_kl_divergence/{metric}/js_divergence_cdf_comparison_maxlen_{max_length}.png"
         
     plt.ylabel("Cumulative Probability")
     plt.legend()
