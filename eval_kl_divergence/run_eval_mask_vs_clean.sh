@@ -24,12 +24,13 @@ mkdir -p results/eval_mask_vs_clean
 
 for i in "${!CONFIGS[@]}"; do
     WINDOW=${CONFIGS[$i]}
+    SAFE_WINDOW=${WINDOW//,/_}
     
     # We module index by amount of gpus you have, e.g % 2 if you have GPUs 0, 1.
     # In run_parallel it iterates GPUs linearly by $i directly. Assuming user can scale.
     GPU_ID=$i
 
-    TARGET_DIR="results/eval_mask_vs_clean/${MASK_RATIO}/${WINDOW}_${MASK_RATIO}"
+    TARGET_DIR="results/eval_mask_vs_clean/${MASK_RATIO}/${SAFE_WINDOW}_${MASK_RATIO}"
     mkdir -p "$TARGET_DIR"
 
     echo "Launching Window=$WINDOW on GPU $GPU_ID in background..."

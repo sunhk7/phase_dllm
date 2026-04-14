@@ -40,11 +40,12 @@ def evaluate_mask_vs_clean(model, valid_samples, w_config, mask_ratio, arg_flags
         safe_w = f"{w_size}_{keep_first_k}"
     else:
         w_size = w_config
+        keep_first_k = 0
         start_idx = w_size
         safe_w = str(w_size)
     
     with torch.no_grad():
-        for seq_idx, input_ids in enumerate(tqdm(valid_samples, desc=f"GPU {pos_id} [Win: {str(w_config)}]", position=pos_id, leave=True)):
+        for seq_idx, input_ids in enumerate(tqdm(valid_samples, desc=f"GPU {pos_id} [Win: {str(w_config)}]", leave=True)):
             input_ids = input_ids.unsqueeze(0).to(device)
             max_length = input_ids.shape[-1]
             
@@ -89,7 +90,8 @@ def evaluate_mask_vs_clean(model, valid_samples, w_config, mask_ratio, arg_flags
                 is_easy = (jsd_old_all < arg_flags.threshold) & is_valid_range
                 
                 dynamic_window = {
-                    'w_size': w_config,
+                    'w_size': w_size,
+                    'keep_first_k': keep_first_k,
                     'global_mask': is_easy
                 }
                 
@@ -161,7 +163,8 @@ def plot_aggregated_results(condition, mask_ratio):
                     data = json.load(root)
                     label = data.get("w_label", d.split(f"_{mask_ratio}")[0].replace('_', ','))
                     clean_label = label.replace('[', '').replace(']', '')
-                    sort_val = int(clean_label.split(',')[0])
+                    # Yields (16,) or (16, 64) depending on how many dims
+                    sort_val = tuple(map(int, clean_label.split(',')))
                     
                     if condition == 'MASK':
                         jsds = np.array(data["mask_jsds"])
@@ -173,15 +176,15 @@ def plot_aggregated_results(condition, mask_ratio):
                             matches_new = np.array(data["mask_matches_new"])
                             acc_new = np.mean(matches_new) * 100 if len(matches_new) > 0 else 0
                             
-                            all_data.append((sort_val, f"{label} (Old)", jsds, acc, 'dashed'))
-                            all_data.append((sort_val + 0.1, f"{label} (SHiFT)", jsds_new, acc_new, 'solid'))
+                            all_data.append(((sort_val, 0), f"{label} (Old)", jsds, acc, 'dashed'))
+                            all_data.append(((sort_val, 1), f"{label} (SHiFT)", jsds_new, acc_new, 'solid'))
                         else:
-                            all_data.append((sort_val, f"W={label}", jsds, acc, 'solid'))
+                            all_data.append(((sort_val, 0), f"W={label}", jsds, acc, 'solid'))
                     else:
                         jsds = np.array(data["clean_jsds"])
                         matches = np.array(data["clean_matches"])
                         acc = np.mean(matches) * 100 if len(matches) > 0 else 0
-                        all_data.append((sort_val, f"W={label}", jsds, acc, 'solid'))
+                        all_data.append(((sort_val, 0), f"W={label}", jsds, acc, 'solid'))
 
     if not all_data:
         print(f"No JSON metrics found for ratio {mask_ratio} in {target_root}")
