@@ -1,50 +1,62 @@
-# 注意力与分布评估器工具箱
+# 注意力与分布评估器工具箱 (Attention & Context Evaluation Toolbox)
 
-本工具箱包含几种精确的科学评估算法，旨在研究局部信号充分性与全局注意力之间的权衡（Local Sufficiency vs Global Attention），专为深入研究扩散 / 掩码语言模型（例如 LLaDA）而设计。它通过高吞吐量指标缓存，严格复制了分析条件（例如留一法去偏、Top-1 分布重叠）。
-
-## 📁 `model/modeling_llada.py`
-- **功能说明**：这是底层的神经网络映射。关键的注入发生在 `_scaled_dot_product_attention` 内部，我们绕过了原生的 PyTorch 块掩码（block-mask）处理，安装了显式的布尔张量路由网格（通过拦截 `local_window_size` 字典）。
-- **核心验证**：实现了真实的 Shift-dLLM 的物理执行（即无论局部时间距离如何，作为 Ground Truth 的固定 token 都可以进行全局完整广播）。
+本工具箱包含一系列精确的科学评估算法，旨在研究**局部信号充分性与全局注意力之间的权衡（Local Sufficiency vs Global Attention）**，专为深入验证扩散 / 掩码语言模型（例如 LLaDA）去噪过程的数学机理而打磨。通过底层逻辑魔改与多显卡并行脚本，极大化提高了模型机制验证的效率。
 
 ---
 
-## 📁 `eval_kl_divergence.py`
-- **功能说明**：执行详尽的批量并行留一法（Token 掩码）提取模拟。
-- **核心验证**：验证当用严格的滑动窗口注意力（$w$）统一替代全局自注意力时，对通用数据集 token 的 Kullback-Leibler (KL) 散度惩罚会发生什么变化。它量化了在纯粹的“盲文本上下文推断”期间产生的数学信号破坏。
-- **如何独立执行**：
+## 📂 底层模型基建映射
+
+### `model/modeling_llada.py`
+- **底层逻辑**：这是框架里底层的神经网络推断映射底座。我们在前向传播过程深处的 `_scaled_dot_product_attention` 内插入了自定针脚。通过无痛绕过 PyTorch 的原生 Block-Mask，我们强制组装了能够显式调控的任意形状“布尔张量路由网格（Boolean Routing Grids)”。
+- **核心能力**：允许您随时发送诸如 `local_window_size=64` 来限制局部视野，更关键的是赋予了模型执行 `local_window_size={'w_size': 64, 'global_mask': is_easy}` 的绝活——这能强制把特定的空间位置打造为无论有多远都全局发散清晰波段的高维路标（Ground Truth Anchors）。
+
+---
+
+## 🛠️ 主力评估实验矩阵 (Evaluations & Bash Runners)
+
+### 🔵 1. 标准散度衰减测算 —— “留一法”破坏容忍度
+使用：`eval_kl_divergence.py` & 联合启动器与并行总线：`run_eval_kl_divergence.sh`
+- **实验逻辑**：使用学术界最古典刻板的 Leave-One-Out（拔卜留一法）。在极具长度的历史长文中，程序每次抽走 **仅且绝对一个词** 变为未知（MASK）。它测算局部定长窗口面对仅这一个缺口时，由于缺少全景信息所引起的 Kullback-Leibler (KL) 解析发散程度。由于单句要重复抽上百次，验证开销极其昂贵扎实。
+- **如何通过 sh 投递**：
   ```bash
-  python eval_kl_divergence.py --window 64
+  chmod +x run_eval_kl_divergence.sh
+  ./run_eval_kl_divergence.sh
   ```
+- **参数控制**：您可以直接在 Bash 脚本内部修改 `CONFIGS=("16" "32" "64" "16,64")`，运行时系统会自动把这四个繁重的遍历进程均分调度到不同的物理显卡。
 
 ---
 
-## 📁 `eval_shift_gt_simulation.py`  ⭐ SHiFT 皇冠上的明珠
-- **功能说明**：动态执行精确的“Ground Truth 替换”模拟条件。
-  1. 通过前置遍历识别出“简单 Token”（$KL < threshold$）。
-  2. 将这些简单 Token 的空间边界无条件地以无掩码状态融入到注意力局部滑动掩码中（代表 `G_t`）。
-  3. 严格针对剩余的“困难 Token”生成掩码（`masked`）排列，并追踪在通用滑动窗口与有 Shift-G_t 支持的边界条件下的预测崩溃行为。
-- **核心验证**：从数学上验证了 SHiFT 背后的基础定理：暴露早期收敛特征可以完全消除随后的局部分布偏差，从而保障无限、安全的生成性能扩展。它绘制了由 Jensen-Shannon (JS) 散度构建的 CDF 映射，并汇总了专注于掩码失败案例的通用 Top-1 条形界限图。
-- **如何独立执行**：
+### 🟢 2. 高噪状态下的动态拯救验证 —— SHiFT 效能定论验证
+使用：`eval_mask_vs_clean.py` & 联合启动器与并行总线：`run_eval_mask_vs_clean.sh`
+- **实验逻辑**：全图大面积致残法。直接施加巨量的随机掩码遮盖大半原句（生成 $z_t$ 去噪半途残状）。通过并行计算，脚本会在残损状态场上计算 **(Global 全局理想)**、**(Old Local 旧式盲猜)** 和 **(SHiFT 找路标的高级解法)**。脚本高度证明了：在长篇废墟下，如果有机制能动态甄别残境里的局部简单易存活词汇，其即可成为“强效路由节点”瞬间补回全境模型实力上限。
+- **如何通过 sh 使用与传参**：
   ```bash
-  python eval_shift_gt_simulation.py --window 32 --threshold 0.05
+  chmod +x run_eval_mask_vs_clean.sh
+  bash run_eval_mask_vs_clean.sh --mask_ratio 0.5 --use_shift --threshold 0.01
   ```
+- **核心参数细节详解**：
+  - `--mask_ratio [float]`：用来指定整块句子里有多少随机面积要被挖塌变成废墟（默认 `0.5` 即 $50\%$ 的 MASK 废墟掩码率）。
+  - `--use_shift`：**核心特权 Flag**。启用后激活“第三路”前向计算。在废墟中动态用 Local 查出哪些是 $JSD < Threshold$ 的易算节点（天选骨干），再拿这些骨干充当 Landmark 全局内存重新喂养给 Local 重跑。最终渲染出双路悬殊反差的对比 CDF 折线。
+  - `--threshold [float]`：控制上一步挑出易算骨干极严苛标准，只有被鉴定成 JSD 小于此阈值的才能被加冕成为全局特征锚点。
 
 ---
 
-## 📁 `eval_top1_agreement.py`
-- **功能说明**：评估在完全干净的标准上下文（$z_0$）下的纯类别对齐准确度。
-- **核心验证**：作为一种理论上的界限验证，旨在探讨：如果所有的 token 身份都完全可见并且可读，丢弃历史 token 是否会显著影响 Top-1 Argmax 分类输出（提示：几乎没有任何影响）。
-- **如何执行**：
-  ```bash
-  python eval_top1_agreement.py
-  ```
-
----
-
-## 📁 `run_eval_shift_gt_simulation.sh`
-- **功能说明**：Bash 任务编排脚本。它将不同的消融实验超参数组合（Threshold 阈值 $\times$ 窗口区间）清晰地映射到 8 个独立 GPU 硬件的内存流中执行，最终通过执行一次合并聚合命令（`--plot_only`）来渲染跨接分布式任务的统一图表矩阵。
-- **如何执行**：
+### 🟠 3. 单点骨干破局测验 —— The Origin Simulation
+使用：`eval_shift_gt_simulation.py` & 联合启动器与并行总线：`run_eval_shift_gt_simulation.sh`
+- **实验逻辑**：验证全局锚基点特性最初起家的祖师爷级探索。它通过极严标准的纯净扫描前置定位简单词（不依赖随机大面积造废墟），并使用全图只挖出一个空位的特化型精确测定，以此展现把收敛物当全局参考会带来的百分百数学等效修复力。
+- **如何通过 sh 投递**：
   ```bash
   chmod +x run_eval_shift_gt_simulation.sh
   ./run_eval_shift_gt_simulation.sh
+  ```
+- **硬件分发**：天生包含了巨型的二维消融测试配置组网。代码利用 8 张显卡承载海量的细颗粒消融测点空间（阈值下限 vs 窗口滑差），跑完后自带生成非常华丽美观的聚合堆叠矩阵柱形图表组件。
+
+---
+
+### ⚪ 4. 无掩码无损对齐评估
+使用：`eval_top1_agreement.py`
+- **实验逻辑**：不施加甚至半分毫 MASK（在完好如初的 $z_0$ 无噪流形端），单独测定长文断距的影响。它探索如果在不挖掉信息的情况下生生切开对上文的绝对注意力连接，模型的最高词输出准心到底偏移几何（结论是毫不动摇）。
+- **执行方式**（轻量秒跑工具，不设立 bash）：
+  ```bash
+  python eval_top1_agreement.py
   ```

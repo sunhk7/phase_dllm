@@ -5,11 +5,14 @@ PIDS=()
 
 # 默认设置
 MASK_RATIO="0.5"
+EXTRA_ARGS=""
 
 # 解析命令行参数
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --mask_ratio) MASK_RATIO="$2"; shift ;;
+        --use_shift) EXTRA_ARGS="$EXTRA_ARGS --use_shift" ;;
+        --threshold) EXTRA_ARGS="$EXTRA_ARGS --threshold $2"; shift ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
     shift
@@ -36,6 +39,7 @@ for i in "${!CONFIGS[@]}"; do
         --mask_ratio $MASK_RATIO \
         --pos_id $GPU_ID \
         --num_samples 100 \
+        $EXTRA_ARGS \
         > "${TARGET_DIR}/logs.txt" 2>&1 &
 
     PIDS+=($!)
@@ -50,6 +54,6 @@ done
 echo "Multi-GPU Evaluation Completed!"
 echo "Generating combined plots from the collected outputs..."
 
-python eval_mask_vs_clean.py --plot_only --mask_ratio $MASK_RATIO
+python eval_mask_vs_clean.py --plot_only --mask_ratio $MASK_RATIO $EXTRA_ARGS
 
 echo "Done! Check results/eval_mask_vs_clean/ for aggregated plots."
