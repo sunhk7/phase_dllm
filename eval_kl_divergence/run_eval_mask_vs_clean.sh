@@ -26,7 +26,7 @@ for i in "${!CONFIGS[@]}"; do
     # In run_parallel it iterates GPUs linearly by $i directly. Assuming user can scale.
     GPU_ID=$i
 
-    TARGET_DIR="results/eval_mask_vs_clean/${WINDOW}_${MASK_RATIO}"
+    TARGET_DIR="results/eval_mask_vs_clean/${MASK_RATIO}/${WINDOW}_${MASK_RATIO}"
     mkdir -p "$TARGET_DIR"
 
     echo "Launching Window=$WINDOW on GPU $GPU_ID in background..."

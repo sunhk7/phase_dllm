@@ -86,7 +86,7 @@ def evaluate_mask_vs_clean(model, valid_samples, w_config, mask_ratio, device, p
             del jsd_all, matches_all, masked_inputs
             torch.cuda.empty_cache()
             
-    target_dir = f"results/eval_mask_vs_clean/{safe_w}_{mask_ratio}"
+    target_dir = f"results/eval_mask_vs_clean/{mask_ratio}/{safe_w}_{mask_ratio}"
     os.makedirs(target_dir, exist_ok=True)
     out_json = f"{target_dir}/metrics.json"
     with open(out_json, "w") as f:
@@ -100,7 +100,7 @@ def evaluate_mask_vs_clean(model, valid_samples, w_config, mask_ratio, device, p
 
 def plot_aggregated_results(condition, mask_ratio):
     """ Plots JS Divergence CDF and Top-1 for all found JSON metrics for a specific condition. """
-    target_root = "results/eval_mask_vs_clean"
+    target_root = f"results/eval_mask_vs_clean/{mask_ratio}"
     if not os.path.exists(target_root):
         print(f"Directory {target_root} not found. Computations not complete?")
         return
