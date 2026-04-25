@@ -528,8 +528,8 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 
     if args.compile:
-        print("Applying torch.compile (mode=reduce-overhead)...")
-        model = torch.compile(model, mode='reduce-overhead')
+        print("Applying torch.compile (mode=default)...")
+        model = torch.compile(model, mode='default')
     prompt = "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?"
 
     m = [{"role": "user", "content": prompt}, ]

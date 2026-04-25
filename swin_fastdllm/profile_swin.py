@@ -29,7 +29,7 @@ def run_profile():
     model.model.config.shift_size = S
 
     print("Compiling model...")
-    compiled_model = torch.compile(model, mode='reduce-overhead')
+    compiled_model = torch.compile(model, mode='default')
 
     prompt = torch.randint(0, 32000, (1, 256), device=device)
 
