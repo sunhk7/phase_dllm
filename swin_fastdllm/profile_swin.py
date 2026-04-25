@@ -4,7 +4,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch.profiler
 
 def run_profile():
-    device = 'cuda:0'
+    device = 'cuda:1'
     print("Loading model...")
     model = AutoModelForCausalLM.from_pretrained(
         'GSAI-ML/LLaDA-8B-Instruct', 
