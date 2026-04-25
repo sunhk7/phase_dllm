@@ -38,18 +38,30 @@ CUDA_VISIBLE_DEVICES=2 python generate.py \
     --attention-mode swin_window \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 3 \
-    --max-new-tokens 128 \
+    --benchmark-repeat 2 \
+    --max-new-tokens 256 \
     --export-json > results/log_swin_window_w${W_SIZE}.txt 2>&1 &
 P2=$!
+
+# Run swin_window_pad on GPU 3
+echo "[GPU 3] Launching Swin Pad... (logs: results/log_swin_window_pad_w${W_SIZE}.txt)"
+CUDA_VISIBLE_DEVICES=3 python generate.py \
+    --attention-mode swin_window_pad \
+    --local-window-size $W_SIZE \
+    --shift-size $SHIFT_SIZE \
+    --benchmark-repeat 2 \
+    --max-new-tokens 256 \
+    --export-json > results/log_swin_window_pad_w${W_SIZE}.txt 2>&1 &
+P3=$!
 
 # Wait for all background processes to finish
 wait $P0
 wait $P1
 wait $P2
+wait $P3
 
 echo "------------------------------------------------------"
-echo "All 3 parallel inferences completed!"
+echo "All 4 parallel inferences completed!"
 echo "Generating visual comparison plots..."
 python plot_utils.py --w $W_SIZE
 

@@ -474,7 +474,7 @@ def run_experiment(model, tokenizer, input_ids, args, w=None, mode=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--attention-mode', type=str, default='baseline', choices=['baseline', 'local_window', 'swin_window'])
+    parser.add_argument('--attention-mode', type=str, default='baseline', choices=['baseline', 'local_window', 'swin_window', 'swin_window_pad'])
     parser.add_argument('--local-window-size', type=int, default=8)
     parser.add_argument('--shift-size', type=int, default=4)
     parser.add_argument('--benchmark', action='store_true')

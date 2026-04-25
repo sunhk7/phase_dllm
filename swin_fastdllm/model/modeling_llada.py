@@ -801,23 +801,37 @@ class LLaDABlock(nn.Module):
                 
             scores_prefix = torch.matmul(q, k_prefix.transpose(-1, -2)) * scale
             
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
+            if mode == 'swin_window_pad' and self.layer_id % 2 == 1:
                 q_pad = F.pad(q, (0, 0, S, S), value=0.0)
                 k_pad = F.pad(k_block, (0, 0, S, S), value=0.0)
                 v_pad = F.pad(v_block, (0, 0, S, S), value=0.0)
-                
                 num_win_pad = (D + 2 * S) // w
                 q_win = q_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
                 k_win = k_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
                 v_win = v_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
-                
                 scores_win = torch.matmul(q_win, k_win.transpose(-1, -2)) * scale
-                
                 seq_range = torch.arange(D + 2 * S, device=q.device)
                 valid_mask = (seq_range >= S) & (seq_range < D + S)
                 win_valid_mask = valid_mask.view(num_win_pad, w)
                 attn_mask = win_valid_mask.unsqueeze(0).unsqueeze(0).unsqueeze(3)
                 scores_win.masked_fill_(~attn_mask, float('-inf'))
+            elif mode == 'swin_window' and self.layer_id % 2 == 1:
+                q_roll = torch.roll(q, shifts=-S, dims=2).contiguous()
+                k_roll = torch.roll(k_block, shifts=-S, dims=2).contiguous()
+                v_roll = torch.roll(v_block, shifts=-S, dims=2).contiguous()
+                
+                num_win = D // w
+                q_win = q_roll.view(B, self.config.n_heads, num_win, w, d_head)
+                k_win = k_roll.view(B, self.config.n_heads, num_win, w, d_head)
+                v_win = v_roll.view(B, self.config.n_heads, num_win, w, d_head)
+                
+                scores_win = torch.matmul(q_win, k_win.transpose(-1, -2)) * scale
+                
+                # Apply cyclic mask solely on the last wrapped window to block causal bleeding
+                mask_w = torch.ones(w, w, device=q.device, dtype=torch.bool)
+                mask_w[:w-S, w-S:] = False
+                mask_w[w-S:, :w-S] = False
+                scores_win[:, :, -1, :, :].masked_fill_(~mask_w, float('-inf'))
             else:
                 num_win = D // w
                 q_win = q.view(B, self.config.n_heads, num_win, w, d_head)
@@ -828,39 +842,48 @@ class LLaDABlock(nn.Module):
             max_prefix = scores_prefix.max(dim=-1, keepdim=True).values
             max_win = scores_win.max(dim=-1, keepdim=True).values
             
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
+            if mode == 'swin_window_pad' and self.layer_id % 2 == 1:
                 max_win_flat = max_win.view(B, self.config.n_heads, D + 2 * S, 1)
                 max_win_mapped = max_win_flat[:, :, S:S+D, :]
+            elif mode == 'swin_window' and self.layer_id % 2 == 1:
+                max_win_flat = max_win.view(B, self.config.n_heads, D, 1)
+                max_win_mapped = torch.roll(max_win_flat, shifts=S, dims=2).contiguous()
             else:
                 max_win_mapped = max_win.view(B, self.config.n_heads, D, 1)
                 
             max_score = torch.maximum(max_prefix, max_win_mapped)
             exp_prefix = torch.exp(scores_prefix - max_score)
             
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
+            if mode == 'swin_window_pad' and self.layer_id % 2 == 1:
                 max_score_pad = F.pad(max_score, (0, 0, S, S), value=0.0)
                 exp_win = torch.exp(scores_win - max_score_pad.view(B, self.config.n_heads, num_win_pad, w, 1))
+            elif mode == 'swin_window' and self.layer_id % 2 == 1:
+                max_score_roll = torch.roll(max_score, shifts=-S, dims=2).contiguous()
+                exp_win = torch.exp(scores_win - max_score_roll.view(B, self.config.n_heads, num_win, w, 1))
             else:
                 exp_win = torch.exp(scores_win - max_score.view(B, self.config.n_heads, num_win, w, 1))
                 
             sum_exp = exp_prefix.sum(dim=-1, keepdim=True)
             sum_exp_win = exp_win.sum(dim=-1, keepdim=True)
             
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
+            out_win = torch.matmul(exp_win, v_win)
+            out_prefix = torch.matmul(exp_prefix, v_prefix)
+            
+            if mode == 'swin_window_pad' and self.layer_id % 2 == 1:
                 sum_exp_win_mapped = sum_exp_win.view(B, self.config.n_heads, D + 2 * S, 1)[:, :, S:S+D, :]
+                out_win_mapped = out_win.view(B, self.config.n_heads, D + 2 * S, d_head)[:, :, S:S+D, :]
+            elif mode == 'swin_window' and self.layer_id % 2 == 1:
+                sum_exp_win_flat = sum_exp_win.view(B, self.config.n_heads, D, 1)
+                sum_exp_win_mapped = torch.roll(sum_exp_win_flat, shifts=S, dims=2).contiguous()
+                
+                out_win_flat = out_win.view(B, self.config.n_heads, D, d_head)
+                out_win_mapped = torch.roll(out_win_flat, shifts=S, dims=2).contiguous()
             else:
                 sum_exp_win_mapped = sum_exp_win.view(B, self.config.n_heads, D, 1)
+                out_win_mapped = out_win.view(B, self.config.n_heads, D, d_head)
                 
             sum_exp = sum_exp + sum_exp_win_mapped
             
-            out_prefix = torch.matmul(exp_prefix, v_prefix)
-            out_win = torch.matmul(exp_win, v_win)
-            
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
-                out_win_mapped = out_win.view(B, self.config.n_heads, D + 2 * S, d_head)[:, :, S:S+D, :]
-            else:
-                out_win_mapped = out_win.view(B, self.config.n_heads, D, d_head)
-                
             att = (out_prefix + out_win_mapped) / sum_exp
         else:
             # Get the attention scores.
