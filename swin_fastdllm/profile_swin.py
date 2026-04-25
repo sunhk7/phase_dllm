@@ -1,15 +1,13 @@
 import torch
-from transformers import AutoModelForCausalLM
 import torch.profiler
-import sys
+from model.modeling_llada import LLaDAModelLM
 from generate import generate_with_dual_cache
 
 def run_profile():
     device = 'cuda:0'
     print("Loading model...")
-    model = AutoModelForCausalLM.from_pretrained(
+    model = LLaDAModelLM.from_pretrained(
         'GSAI-ML/LLaDA-8B-Instruct', 
-        trust_remote_code=True, 
         torch_dtype=torch.bfloat16
     ).to(device).eval()
     
