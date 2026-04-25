@@ -242,6 +242,7 @@ def generate_with_dual_cache(
         _ev_p_st.record()
 
         # 1) Warm KV-cache on the full prefix once per block
+        torch.compiler.cudagraph_mark_step_begin()
         out_full = model(x, use_cache=True)
         
         _ev_p_ed.record()
@@ -282,6 +283,7 @@ def generate_with_dual_cache(
             # Evaluate logits only for current block with cache
             if (x[:, s:e] == mask_id).sum() == 0:
                 break
+            torch.compiler.cudagraph_mark_step_begin()
             logits_blk = model(
                 x[:, s:e], past_key_values=past_key_values, use_cache=True, replace_position=replace_position
             ).logits  # shape expected by get_transfer_index*
@@ -448,9 +450,9 @@ def run_experiment(model, tokenizer, input_ids, args, w=None, mode=None):
     if mode is not None:
         model.model.config.attention_mode = mode
 
-    # Read hyperparameters from config instead of purely hardcoding
+    # Use CLI args directly (config defaults are stale)
     c_steps = getattr(model.model.config, 'steps', 128)
-    c_block_len = getattr(model.model.config, 'block_length', 32)
+    c_block_len = args.block_length
     c_temp = getattr(model.model.config, 'temperature', 0.0)
     c_remask = getattr(model.model.config, 'remasking', 'low_confidence')
 
