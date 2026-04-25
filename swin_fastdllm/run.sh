@@ -20,7 +20,7 @@ CUDA_VISIBLE_DEVICES=4 python generate.py \
     --attention-mode baseline \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 30 \
+    --benchmark-repeat 10 \
     --max-new-tokens $MAX_NEW_TOKENS \
     --block-length $BLOCK_LENGTH \
     --output-dir "$OUT_DIR" \
@@ -33,7 +33,7 @@ CUDA_VISIBLE_DEVICES=5 python generate.py \
     --attention-mode local_window \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 30 \
+    --benchmark-repeat 10 \
     --max-new-tokens $MAX_NEW_TOKENS \
     --block-length $BLOCK_LENGTH \
     --output-dir "$OUT_DIR" \
@@ -46,7 +46,7 @@ CUDA_VISIBLE_DEVICES=6 python generate.py \
     --attention-mode swin_window \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 30 \
+    --benchmark-repeat 10 \
     --max-new-tokens $MAX_NEW_TOKENS \
     --block-length $BLOCK_LENGTH \
     --output-dir "$OUT_DIR" \
