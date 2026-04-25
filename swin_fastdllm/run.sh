@@ -11,8 +11,8 @@ echo "Configuration: local-window-size = ${W_SIZE}, shift-size = ${SHIFT_SIZE}"
 echo "------------------------------------------------------"
 
 # Run baseline on GPU 0
-echo "[GPU 0] Launching Baseline... (logs: results/log_baseline_w${W_SIZE}.txt)"
-CUDA_VISIBLE_DEVICES=0 python generate.py \
+echo "[GPU 4] Launching Baseline... (logs: results/log_baseline_w${W_SIZE}.txt)"
+CUDA_VISIBLE_DEVICES=4 python generate.py \
     --attention-mode baseline \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
@@ -22,8 +22,8 @@ CUDA_VISIBLE_DEVICES=0 python generate.py \
 P0=$!
 
 # Run local_window on GPU 1
-echo "[GPU 1] Launching Local Window... (logs: results/log_local_window_w${W_SIZE}.txt)"
-CUDA_VISIBLE_DEVICES=1 python generate.py \
+echo "[GPU 5] Launching Local Window... (logs: results/log_local_window_w${W_SIZE}.txt)"
+CUDA_VISIBLE_DEVICES=5 python generate.py \
     --attention-mode local_window \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
@@ -33,8 +33,8 @@ CUDA_VISIBLE_DEVICES=1 python generate.py \
 P1=$!
 
 # Run swin_window on GPU 2
-echo "[GPU 2] Launching Swin Window... (logs: results/log_swin_window_w${W_SIZE}.txt)"
-CUDA_VISIBLE_DEVICES=2 python generate.py \
+echo "[GPU 6] Launching Swin Window... (logs: results/log_swin_window_w${W_SIZE}.txt)"
+CUDA_VISIBLE_DEVICES=6 python generate.py \
     --attention-mode swin_window \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
@@ -44,8 +44,8 @@ CUDA_VISIBLE_DEVICES=2 python generate.py \
 P2=$!
 
 # Run swin_window_pad on GPU 3
-echo "[GPU 3] Launching Swin Pad... (logs: results/log_swin_window_pad_w${W_SIZE}.txt)"
-CUDA_VISIBLE_DEVICES=3 python generate.py \
+echo "[GPU 7] Launching Swin Pad... (logs: results/log_swin_window_pad_w${W_SIZE}.txt)"
+CUDA_VISIBLE_DEVICES=7 python generate.py \
     --attention-mode swin_window_pad \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
