@@ -680,24 +680,39 @@ class LLaDABlock(nn.Module):
             )
             return r.transpose(1, 2)
         else:
-            # torch's sdpa doesn't support GQA, so we're doing this
+            # Zero-copy PyTorch SDPA GQA emulation
             assert k.size(1) == v.size(1)
             num_kv_heads = k.size(1)
             num_q_heads = q.size(1)
             if num_q_heads != num_kv_heads:
                 assert num_q_heads % num_kv_heads == 0
-                k = k.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
-                v = v.repeat_interleave(num_q_heads // num_kv_heads, dim=1, output_size=num_q_heads)
-
-            # Modify: MDM set causal to False, and with no attn_mask.
-            return scaled_dot_product_attention(
-                q,
-                k,
-                v,
-                attn_mask=attn_mask,
-                dropout_p=dropout_p,
-                is_causal=False,
-            )
+                factor = num_q_heads // num_kv_heads
+                B, _, L_q, hd = q.shape
+                _, _, L_k, _ = k.shape
+                
+                q_broad = q.view(B, num_kv_heads, factor, L_q, hd)
+                k_broad = k.view(B, num_kv_heads, 1, L_k, hd)
+                v_broad = v.view(B, num_kv_heads, 1, L_k, hd)
+                
+                # if attn_mask exists, shape adaptation is required, but typically None in baseline
+                out = scaled_dot_product_attention(
+                    q_broad,
+                    k_broad,
+                    v_broad,
+                    attn_mask=attn_mask,
+                    dropout_p=dropout_p,
+                    is_causal=False,
+                )
+                return out.view(B, num_q_heads, L_q, hd)
+            else:
+                return scaled_dot_product_attention(
+                    q,
+                    k,
+                    v,
+                    attn_mask=attn_mask,
+                    dropout_p=dropout_p,
+                    is_causal=False,
+                )
 
     def attention(
         self,

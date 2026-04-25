@@ -16,7 +16,7 @@ CUDA_VISIBLE_DEVICES=0 python generate.py \
     --attention-mode baseline \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 2 \
+    --benchmark-repeat 30 \
     --max-new-tokens 256 \
     --export-json > results/log_baseline_w${W_SIZE}.txt 2>&1 &
 P0=$!
@@ -27,7 +27,7 @@ CUDA_VISIBLE_DEVICES=1 python generate.py \
     --attention-mode local_window \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 2 \
+    --benchmark-repeat 30 \
     --max-new-tokens 256 \
     --export-json > results/log_local_window_w${W_SIZE}.txt 2>&1 &
 P1=$!
@@ -38,7 +38,7 @@ CUDA_VISIBLE_DEVICES=2 python generate.py \
     --attention-mode swin_window \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 2 \
+    --benchmark-repeat 30 \
     --max-new-tokens 256 \
     --export-json > results/log_swin_window_w${W_SIZE}.txt 2>&1 &
 P2=$!
@@ -49,7 +49,7 @@ CUDA_VISIBLE_DEVICES=3 python generate.py \
     --attention-mode swin_window_pad \
     --local-window-size $W_SIZE \
     --shift-size $SHIFT_SIZE \
-    --benchmark-repeat 2 \
+    --benchmark-repeat 30 \
     --max-new-tokens 256 \
     --export-json > results/log_swin_window_pad_w${W_SIZE}.txt 2>&1 &
 P3=$!
