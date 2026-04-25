@@ -33,12 +33,13 @@ def run_profile():
 
     prompt = torch.randint(0, 32000, (1, 256), device=device)
 
-    # 4 个对比项：baseline, local_window, swin_window, swin_window+compile
+    # 5 个对比项
     configs = [
         ('baseline',             'baseline',     model),
         ('local_window',         'local_window', model),
         ('swin_window',          'swin_window',  model),
         ('swin_window_compiled', 'swin_window',  compiled_model),
+        ('swin_triton',          'swin_triton',  model),
     ]
 
     out_file = f"profiler_comparison_bl{block_length}.txt"

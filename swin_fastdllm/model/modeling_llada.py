@@ -779,7 +779,7 @@ class LLaDABlock(nn.Module):
         mode = getattr(self.config, 'attention_mode', 'baseline')
         is_current_decoding_block = (replace_position is not None) and (D > 0 and KV_T > D)
 
-        if is_current_decoding_block and mode in ['local_window', 'swin_window']:
+        if is_current_decoding_block and mode in ['local_window', 'swin_window', 'swin_triton']:
             w = getattr(self.config, 'local_window_size', 8)
             S = getattr(self.config, 'shift_size', 4)
             s = KV_T - D
@@ -799,64 +799,69 @@ class LLaDABlock(nn.Module):
                 v_prefix = v_prefix.repeat_interleave(num_q_h // num_kv_h, dim=1)
                 k_block = k_block.repeat_interleave(num_q_h // num_kv_h, dim=1)
                 v_block = v_block.repeat_interleave(num_q_h // num_kv_h, dim=1)
-                
-            scores_prefix = torch.matmul(q, k_prefix.transpose(-1, -2)) * scale
-            
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
-                q_pad = F.pad(q, (0, 0, S, S), value=0.0)
-                k_pad = F.pad(k_block, (0, 0, S, S), value=0.0)
-                v_pad = F.pad(v_block, (0, 0, S, S), value=0.0)
-                num_win_pad = (D + 2 * S) // w
-                q_win = q_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
-                k_win = k_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
-                v_win = v_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
-                scores_win = torch.matmul(q_win, k_win.transpose(-1, -2)) * scale
-                seq_range = torch.arange(D + 2 * S, device=q.device)
-                valid_mask = (seq_range >= S) & (seq_range < D + S)
-                win_valid_mask = valid_mask.view(num_win_pad, w)
-                attn_mask = win_valid_mask.unsqueeze(0).unsqueeze(0).unsqueeze(3)
-                scores_win.masked_fill_(~attn_mask, float('-inf'))
+
+            # ---- Triton fused path: single kernel launch ----
+            if mode == 'swin_triton':
+                from triton_swin_attn import swin_triton_attention
+                att = swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, self.layer_id)
             else:
-                num_win = D // w
-                q_win = q.view(B, self.config.n_heads, num_win, w, d_head)
-                k_win = k_block.view(B, self.config.n_heads, num_win, w, d_head)
-                v_win = v_block.view(B, self.config.n_heads, num_win, w, d_head)
-                scores_win = torch.matmul(q_win, k_win.transpose(-1, -2)) * scale
+                # ---- Existing PyTorch manual path ----
+                scores_prefix = torch.matmul(q, k_prefix.transpose(-1, -2)) * scale
                 
-            max_prefix = scores_prefix.max(dim=-1, keepdim=True).values
-            max_win = scores_win.max(dim=-1, keepdim=True).values
-            
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
-                max_win_flat = max_win.view(B, self.config.n_heads, D + 2 * S, 1)
-                max_win_mapped = max_win_flat[:, :, S:S+D, :]
-            else:
-                max_win_mapped = max_win.view(B, self.config.n_heads, D, 1)
+                if mode == 'swin_window' and self.layer_id % 2 == 1:
+                    q_pad = F.pad(q, (0, 0, S, S), value=0.0)
+                    k_pad = F.pad(k_block, (0, 0, S, S), value=0.0)
+                    v_pad = F.pad(v_block, (0, 0, S, S), value=0.0)
+                    num_win_pad = (D + 2 * S) // w
+                    q_win = q_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
+                    k_win = k_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
+                    v_win = v_pad.view(B, self.config.n_heads, num_win_pad, w, d_head)
+                    scores_win = torch.matmul(q_win, k_win.transpose(-1, -2)) * scale
+                    seq_range = torch.arange(D + 2 * S, device=q.device)
+                    valid_mask = (seq_range >= S) & (seq_range < D + S)
+                    win_valid_mask = valid_mask.view(num_win_pad, w)
+                    attn_mask = win_valid_mask.unsqueeze(0).unsqueeze(0).unsqueeze(3)
+                    scores_win.masked_fill_(~attn_mask, float('-inf'))
+                else:
+                    num_win = D // w
+                    q_win = q.view(B, self.config.n_heads, num_win, w, d_head)
+                    k_win = k_block.view(B, self.config.n_heads, num_win, w, d_head)
+                    v_win = v_block.view(B, self.config.n_heads, num_win, w, d_head)
+                    scores_win = torch.matmul(q_win, k_win.transpose(-1, -2)) * scale
+                    
+                max_prefix = scores_prefix.max(dim=-1, keepdim=True).values
+                max_win = scores_win.max(dim=-1, keepdim=True).values
                 
-            max_score = torch.maximum(max_prefix, max_win_mapped)
-            exp_prefix = torch.exp(scores_prefix - max_score)
-            
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
-                max_score_pad = F.pad(max_score, (0, 0, S, S), value=0.0)
-                exp_win = torch.exp(scores_win - max_score_pad.view(B, self.config.n_heads, num_win_pad, w, 1))
-            else:
-                exp_win = torch.exp(scores_win - max_score.view(B, self.config.n_heads, num_win, w, 1))
+                if mode == 'swin_window' and self.layer_id % 2 == 1:
+                    max_win_flat = max_win.view(B, self.config.n_heads, D + 2 * S, 1)
+                    max_win_mapped = max_win_flat[:, :, S:S+D, :]
+                else:
+                    max_win_mapped = max_win.view(B, self.config.n_heads, D, 1)
+                    
+                max_score = torch.maximum(max_prefix, max_win_mapped)
+                exp_prefix = torch.exp(scores_prefix - max_score)
                 
-            sum_exp = exp_prefix.sum(dim=-1, keepdim=True)
-            sum_exp_win = exp_win.sum(dim=-1, keepdim=True)
-            
-            out_win = torch.matmul(exp_win, v_win)
-            out_prefix = torch.matmul(exp_prefix, v_prefix)
-            
-            if mode == 'swin_window' and self.layer_id % 2 == 1:
-                sum_exp_win_mapped = sum_exp_win.view(B, self.config.n_heads, D + 2 * S, 1)[:, :, S:S+D, :]
-                out_win_mapped = out_win.view(B, self.config.n_heads, D + 2 * S, d_head)[:, :, S:S+D, :]
-            else:
-                sum_exp_win_mapped = sum_exp_win.view(B, self.config.n_heads, D, 1)
-                out_win_mapped = out_win.view(B, self.config.n_heads, D, d_head)
+                if mode == 'swin_window' and self.layer_id % 2 == 1:
+                    max_score_pad = F.pad(max_score, (0, 0, S, S), value=0.0)
+                    exp_win = torch.exp(scores_win - max_score_pad.view(B, self.config.n_heads, num_win_pad, w, 1))
+                else:
+                    exp_win = torch.exp(scores_win - max_score.view(B, self.config.n_heads, num_win, w, 1))
+                    
+                sum_exp = exp_prefix.sum(dim=-1, keepdim=True)
+                sum_exp_win = exp_win.sum(dim=-1, keepdim=True)
                 
-            sum_exp = sum_exp + sum_exp_win_mapped
-            
-            att = (out_prefix + out_win_mapped) / sum_exp
+                out_win = torch.matmul(exp_win, v_win)
+                out_prefix = torch.matmul(exp_prefix, v_prefix)
+                
+                if mode == 'swin_window' and self.layer_id % 2 == 1:
+                    sum_exp_win_mapped = sum_exp_win.view(B, self.config.n_heads, D + 2 * S, 1)[:, :, S:S+D, :]
+                    out_win_mapped = out_win.view(B, self.config.n_heads, D + 2 * S, d_head)[:, :, S:S+D, :]
+                else:
+                    sum_exp_win_mapped = sum_exp_win.view(B, self.config.n_heads, D, 1)
+                    out_win_mapped = out_win.view(B, self.config.n_heads, D, d_head)
+                    
+                sum_exp = sum_exp + sum_exp_win_mapped
+                att = (out_prefix + out_win_mapped) / sum_exp
         else:
             # Get the attention scores.
             # shape: (B, nh, T, hs)
