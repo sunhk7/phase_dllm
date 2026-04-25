@@ -469,7 +469,7 @@ def run_experiment(model, tokenizer, input_ids, args, w=None, mode=None):
     max_mem = torch.cuda.max_memory_allocated() / (1024**2) # MB
     
     text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
-    return avg_latency, tokens_per_sec, max_mem, text
+    return latency_list, nfe, tokens_per_sec, max_mem, text
 
 
 def main():
@@ -507,12 +507,14 @@ def main():
         w = args.local_window_size
         print(f"Running mode: {mode} with w={w}")
         
-        lat, tps, mem, text = run_experiment(model, tokenizer, input_ids, args, w=w, mode=mode)
+        lat_list, nfe_val, tps, mem, text = run_experiment(model, tokenizer, input_ids, args, w=w, mode=mode)
         
         results = {
             'tokens_per_sec': tps, 
             'max_mem': mem, 
-            'text': text
+            'text': text,
+            'latency_list': lat_list,
+            'nfe': nfe_val
         }
                 
         out_path = f'results/res_{mode}_w{w}.json'
@@ -526,8 +528,9 @@ def main():
     model.model.config.shift_size = args.shift_size
 
     if args.benchmark:
-        lat, tps, mem, text = run_experiment(model, tokenizer, input_ids, args)
-        print(f"Mode: {args.attention_mode} | Latency: {lat:.3f}s | Tokens/s: {tps:.2f} | Max Mem: {mem:.2f}MB")
+        lat_list, nfe_val, tps, mem, text = run_experiment(model, tokenizer, input_ids, args)
+        avg_latency = sum(lat_list) / len(lat_list)
+        print(f"Mode: {args.attention_mode} | Avg Latency: {avg_latency:.3f}s | Tokens/s: {tps:.2f} | Max Mem: {mem:.2f}MB")
         if args.debug:
             print("Output text:\n", text)
     else:

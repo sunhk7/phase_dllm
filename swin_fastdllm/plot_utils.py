@@ -73,6 +73,68 @@ def plot_single_window_size(w, save_dir='results'):
     plt.close()
     print(f"Saved: {mem_path}")
 
+    # ==========================
+    # 3. Plot Avg Step Latency (Bar Chart)
+    # ==========================
+    def get_step_lats(res):
+        lats = res.get('latency_list', [])
+        nfe = res.get('nfe', 1)
+        if not lats or nfe == 0:
+            return [0]
+        # convert total sequence latency to single step latency (ms/step)
+        return [(l / nfe) * 1000 for l in lats]
+        
+    step_lats_base = get_step_lats(res_base)
+    step_lats_local = get_step_lats(res_local)
+    step_lats_swin = get_step_lats(res_swin)
+    step_lats_pad = get_step_lats(res_pad)
+    
+    avg_step_lats = [
+        np.mean(step_lats_base),
+        np.mean(step_lats_local),
+        np.mean(step_lats_swin),
+        np.mean(step_lats_pad)
+    ]
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars = ax.bar(x, avg_step_lats, width, color=['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e'])
+    ax.set_ylabel('Avg Single Step Latency (ms)')
+    ax.set_title(f'Average Per-Step Decoding Latency (w={w})')
+    ax.set_xticks(x)
+    ax.set_xticklabels(modes)
+    for bar in bars:
+        yval = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2, yval, f'{yval:.2f} ms', va='bottom', ha='center', fontsize=11)
+        
+    step_lat_path = os.path.join(save_dir, f'step_latency_w{w}.png')
+    plt.savefig(step_lat_path, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"Saved: {step_lat_path}")
+    
+    # ==========================
+    # 4. Plot Box Plot for Step Latency Jitter
+    # ==========================
+    fig, ax = plt.subplots(figsize=(10, 6))
+    data = [step_lats_base, step_lats_local, step_lats_swin, step_lats_pad]
+    
+    # Filter out empty data from arrays completely if early runs errored
+    bp = ax.boxplot([d if len(d) > 0 else [0] for d in data], patch_artist=True, labels=modes)
+    colors = ['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e']
+    
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+    for median in bp['medians']:
+        median.set(color='black', linewidth=2)
+        
+    ax.set_ylabel('Step Latency Distribution (ms)')
+    ax.set_title(f'Per-Step Latency Stability & Jitter Spread (w={w})')
+    
+    boxplot_path = os.path.join(save_dir, f'step_latency_boxplot_w{w}.png')
+    plt.savefig(boxplot_path, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"Saved: {boxplot_path}")
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--w', type=int, default=8, help="Window size that was tested")
