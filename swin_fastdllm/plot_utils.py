@@ -18,86 +18,75 @@ def plot_single_window_size(w, save_dir='results'):
             res_local = json.load(f)
         with open(f'{save_dir}/res_swin_window_w{w}.json', 'r') as f:
             res_swin = json.load(f)
-        with open(f'{save_dir}/res_swin_window_pad_w{w}.json', 'r') as f:
-            res_pad = json.load(f)
     except FileNotFoundError as e:
         print(f"Error: Required JSON files not found. Ensure inferences are complete.\n{e}")
         return
 
-    modes = ['Baseline', 'Local Window', 'Swin Window\n(Roll)', 'Swin Window\n(Pad)']
-    tps = [res_base['tokens_per_sec'], res_local['tokens_per_sec'], res_swin['tokens_per_sec'], res_pad['tokens_per_sec']]
-    mem = [res_base['max_mem'], res_local['max_mem'], res_swin['max_mem'], res_pad['max_mem']]
+    modes = ['Baseline', 'Local Window', 'Swin Window']
+    tps = [res_base['tokens_per_sec'], res_local['tokens_per_sec'], res_swin['tokens_per_sec']]
+    dec_tps = [res_base.get('decode_tokens_per_sec', 0), res_local.get('decode_tokens_per_sec', 0), res_swin.get('decode_tokens_per_sec', 0)]
+    latencies = [res_base.get('avg_latency', 0), res_local.get('avg_latency', 0), res_swin.get('avg_latency', 0)]
     
     x = np.arange(len(modes))
-    width = 0.5
     
     # ==========================
-    # 1. Plot Tokens / s
+    # 1. Plot Consolidated Throughput & Latency Chart
     # ==========================
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.bar(x, tps, width, color=['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e'])
+    fig, ax1 = plt.subplots(figsize=(10, 6))
     
-    ax.set_ylabel('Tokens / s')
-    ax.set_title(f'Throughput Comparison (w={w})')
-    ax.set_xticks(x)
-    ax.set_xticklabels(modes)
+    bar_width = 0.35
     
-    # Annotate bars
-    for bar in bars:
+    bars1 = ax1.bar(x - bar_width/2, dec_tps, bar_width, label='Decode Tokens/s', color='#1f77b4')
+    bars2 = ax1.bar(x + bar_width/2, tps, bar_width, label='End-to-End Tokens/s', color='#ff7f0e')
+    
+    ax1.set_ylabel('Tokens / s')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(modes)
+    
+    for bar in bars1 + bars2:
         yval = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2, yval, f'{yval:.2f}', va='bottom', ha='center', fontsize=11)
+        ax1.text(bar.get_x() + bar.get_width()/2, yval, f'{yval:.1f}', va='bottom', ha='center', fontsize=10)
         
-    tps_path = os.path.join(save_dir, f'throughput_w{w}.png')
+    ax2 = ax1.twinx()
+    line = ax2.plot(x, latencies, color='#d62728', marker='o', linestyle='-', linewidth=2, markersize=8, label='Total E2E Latency (s)')
+    ax2.set_ylabel('Total Generation Latency (s)')
+    
+    for i, lat in enumerate(latencies):
+        ax2.annotate(f'{lat:.2f} s', (x[i], lat), textcoords="offset points", xytext=(0,10), ha='center', fontsize=11, color='#d62728', fontweight='bold')
+        
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=3)
+    
+    ax1.set_title(f'Comprehensive Throughput & E2E Latency (w={w})', pad=30)
+    
+    tps_path = os.path.join(save_dir, f'throughput_latency_w{w}.png')
     plt.savefig(tps_path, bbox_inches='tight', dpi=150)
     plt.close()
     print(f"Saved: {tps_path}")
 
     # ==========================
-    # 2. Plot Peak Max Memory
-    # ==========================
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.bar(x, mem, width, color=['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e'])
-    
-    ax.set_ylabel('Peak VRAM Allocation (MB)')
-    ax.set_title(f'VRAM Usage Comparison (w={w})')
-    ax.set_xticks(x)
-    ax.set_xticklabels(modes)
-    
-    # Annotate bars
-    for bar in bars:
-        yval = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2, yval, f'{yval:.0f} MB', va='bottom', ha='center', fontsize=11)
-        
-    mem_path = os.path.join(save_dir, f'memory_w{w}.png')
-    plt.savefig(mem_path, bbox_inches='tight', dpi=150)
-    plt.close()
-    print(f"Saved: {mem_path}")
-
-    # ==========================
-    # 3. Plot Avg Step Latency (Bar Chart)
+    # 2. Plot Avg Step Latency (Bar Chart)
     # ==========================
     def get_step_lats(res):
         lats = res.get('latency_list', [])
         nfe = res.get('nfe', 1)
         if not lats or nfe == 0:
             return [0]
-        # convert total sequence latency to single step latency (ms/step)
         return [(l / nfe) * 1000 for l in lats]
         
     step_lats_base = get_step_lats(res_base)
     step_lats_local = get_step_lats(res_local)
     step_lats_swin = get_step_lats(res_swin)
-    step_lats_pad = get_step_lats(res_pad)
     
     avg_step_lats = [
         np.mean(step_lats_base),
         np.mean(step_lats_local),
-        np.mean(step_lats_swin),
-        np.mean(step_lats_pad)
+        np.mean(step_lats_swin)
     ]
     
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bars = ax.bar(x, avg_step_lats, width, color=['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e'])
+    fig, ax = plt.subplots(figsize=(8, 6))
+    bars = ax.bar(x, avg_step_lats, bar_width*1.5, color=['#d62728', '#1f77b4', '#2ca02c'])
     ax.set_ylabel('Avg Single Step Latency (ms)')
     ax.set_title(f'Average Per-Step Decoding Latency (w={w})')
     ax.set_xticks(x)
@@ -112,14 +101,13 @@ def plot_single_window_size(w, save_dir='results'):
     print(f"Saved: {step_lat_path}")
     
     # ==========================
-    # 4. Plot Box Plot for Step Latency Jitter
+    # 3. Plot Box Plot for Step Latency Jitter
     # ==========================
-    fig, ax = plt.subplots(figsize=(10, 6))
-    data = [step_lats_base, step_lats_local, step_lats_swin, step_lats_pad]
+    fig, ax = plt.subplots(figsize=(8, 6))
+    data = [step_lats_base, step_lats_local, step_lats_swin]
     
-    # Filter out empty data from arrays completely if early runs errored
     bp = ax.boxplot([d if len(d) > 0 else [0] for d in data], patch_artist=True, labels=modes)
-    colors = ['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e']
+    colors = ['#d62728', '#1f77b4', '#2ca02c']
     
     for patch, color in zip(bp['boxes'], colors):
         patch.set_facecolor(color)
@@ -138,7 +126,8 @@ def plot_single_window_size(w, save_dir='results'):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--w', type=int, default=8, help="Window size that was tested")
+    parser.add_argument('--output-dir', type=str, default='results', help="Directory to load/save JSON tracking metrics")
     args = parser.parse_args()
     
-    print(f"Generating isolated plots for Window Size = {args.w}...")
-    plot_single_window_size(args.w)
+    print(f"Generating isolated plots for Window Size = {args.w} in {args.output_dir}...")
+    plot_single_window_size(args.w, save_dir=args.output_dir)

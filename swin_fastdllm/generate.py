@@ -227,6 +227,7 @@ def generate_with_dual_cache(
     x[:, :Lp] = prompt
 
     nfe = 0
+    events = []
 
     for nb in range(num_blocks):
         s = Lp + nb * block_length
@@ -236,8 +237,16 @@ def generate_with_dual_cache(
         block_mask_index = (x[:, s:e] == mask_id)  # (B, block_length)
         num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps_per_block)  # (B, steps_per_block)
 
+        _ev_p_st = torch.cuda.Event(enable_timing=True)
+        _ev_p_ed = torch.cuda.Event(enable_timing=True)
+        _ev_p_st.record()
+
         # 1) Warm KV-cache on the full prefix once per block
         out_full = model(x, use_cache=True)
+        
+        _ev_p_ed.record()
+        events.append(('prefill', _ev_p_st, _ev_p_ed))
+        
         past_key_values = out_full.past_key_values
         nfe += 1
 
@@ -262,6 +271,10 @@ def generate_with_dual_cache(
 
         # In-place update via torch.where (no tensor-slice assignment with mask)
         x = torch.where(transfer_index, x0, x)
+
+        _ev_d_st = torch.cuda.Event(enable_timing=True)
+        _ev_d_ed = torch.cuda.Event(enable_timing=True)
+        _ev_d_st.record()
 
         # 2) Semi-autoregressive refinement, fixed number of steps (graph-friendly)
         #    Each iteration runs on the current block with KV-cache and replace_position
@@ -293,7 +306,14 @@ def generate_with_dual_cache(
 
             nfe += 1
 
-    return x, nfe
+        _ev_d_ed.record()
+        events.append(('decode', _ev_d_st, _ev_d_ed))
+
+    torch.cuda.synchronize()
+    prefill_time_sec = sum(st.elapsed_time(ed) for label, st, ed in events if label == 'prefill') / 1000.0
+    decode_time_sec = sum(st.elapsed_time(ed) for label, st, ed in events if label == 'decode') / 1000.0
+
+    return x, nfe, prefill_time_sec, decode_time_sec
 
 
 
@@ -450,39 +470,52 @@ def run_experiment(model, tokenizer, input_ids, args, w=None, mode=None):
     
     latency_list = []
     
+    latency_list = []
+    prefill_list = []
+    decode_list = []
+    
     with torch.inference_mode():
         for i in range(args.benchmark_repeat):
             torch.cuda.synchronize()
             start_events[i].record()
-            out, nfe = generate_with_dual_cache(
+            out, nfe, p_time, d_time = generate_with_dual_cache(
                 model, input_ids, steps=c_steps, gen_length=args.max_new_tokens, 
                 block_length=c_block_len, temperature=c_temp, remasking=c_remask
             )
             end_events[i].record()
             torch.cuda.synchronize()
+            prefill_list.append(p_time)
+            decode_list.append(d_time)
             
     for i in range(args.benchmark_repeat):
         latency_list.append(start_events[i].elapsed_time(end_events[i]) / 1000.0) # seconds
         
     avg_latency = sum(latency_list) / len(latency_list)
+    avg_prefill = sum(prefill_list) / len(prefill_list)
+    avg_decode = sum(decode_list) / len(decode_list)
+    
     tokens_per_sec = args.max_new_tokens / avg_latency
+    decode_tokens_per_sec = args.max_new_tokens / avg_decode if avg_decode > 0 else 0
+    
     max_mem = torch.cuda.max_memory_allocated() / (1024**2) # MB
     
     text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
-    return latency_list, nfe, tokens_per_sec, max_mem, text
+    return latency_list, nfe, tokens_per_sec, decode_tokens_per_sec, avg_latency, max_mem, text
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--attention-mode', type=str, default='baseline', choices=['baseline', 'local_window', 'swin_window', 'swin_window_pad'])
+    parser.add_argument('--attention-mode', type=str, default='baseline', choices=['baseline', 'local_window', 'swin_window'])
     parser.add_argument('--local-window-size', type=int, default=8)
     parser.add_argument('--shift-size', type=int, default=4)
     parser.add_argument('--benchmark', action='store_true')
     parser.add_argument('--benchmark-warmup-steps', type=int, default=10)
     parser.add_argument('--benchmark-repeat', type=int, default=30)
     parser.add_argument('--max-new-tokens', type=int, default=256)
+    parser.add_argument('--block-length', type=int, default=32)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--export-json', action='store_true', help="Export results to JSON instead of printing")
+    parser.add_argument('--output-dir', type=str, default='results')
     args = parser.parse_args()
 
     device = 'cuda'
@@ -501,23 +534,25 @@ def main():
     if args.export_json:
         import json
         import os
-        os.makedirs('results', exist_ok=True)
+        os.makedirs(args.output_dir, exist_ok=True)
         
         mode = args.attention_mode
         w = args.local_window_size
         print(f"Running mode: {mode} with w={w}")
         
-        lat_list, nfe_val, tps, mem, text = run_experiment(model, tokenizer, input_ids, args, w=w, mode=mode)
+        lat_list, nfe_val, tps, dec_tps, avg_lat, mem, text = run_experiment(model, tokenizer, input_ids, args, w=w, mode=mode)
         
         results = {
             'tokens_per_sec': tps, 
+            'decode_tokens_per_sec': dec_tps,
+            'avg_latency': avg_lat,
             'max_mem': mem, 
             'text': text,
             'latency_list': lat_list,
             'nfe': nfe_val
         }
                 
-        out_path = f'results/res_{mode}_w{w}.json'
+        out_path = os.path.join(args.output_dir, f'res_{mode}_w{w}.json')
         with open(out_path, 'w') as f:
             json.dump(results, f, indent=2)
         print(f"Saved results to {out_path}")
@@ -526,11 +561,12 @@ def main():
     model.model.config.attention_mode = args.attention_mode
     model.model.config.local_window_size = args.local_window_size
     model.model.config.shift_size = args.shift_size
+    model.model.config.block_length = args.block_length
 
     if args.benchmark:
-        lat_list, nfe_val, tps, mem, text = run_experiment(model, tokenizer, input_ids, args)
+        lat_list, nfe_val, tps, dec_tps, avg_lat, mem, text = run_experiment(model, tokenizer, input_ids, args)
         avg_latency = sum(lat_list) / len(lat_list)
-        print(f"Mode: {args.attention_mode} | Avg Latency: {avg_latency:.3f}s | Tokens/s: {tps:.2f} | Max Mem: {mem:.2f}MB")
+        print(f"Mode: {args.attention_mode} | Avg Latency: {avg_latency:.3f}s | Tokens/s: {tps:.2f} | Dec Tokens/s: {dec_tps:.2f} | Max Mem: {mem:.2f}MB")
         if args.debug:
             print("Output text:\n", text)
     else:
