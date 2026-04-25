@@ -508,6 +508,7 @@ def main():
     parser.add_argument('--attention-mode', type=str, default='baseline', choices=['baseline', 'local_window', 'swin_window'])
     parser.add_argument('--local-window-size', type=int, default=8)
     parser.add_argument('--shift-size', type=int, default=4)
+    parser.add_argument('--compile', action='store_true', help='Wrap model with torch.compile for operator fusion')
     parser.add_argument('--benchmark', action='store_true')
     parser.add_argument('--benchmark-warmup-steps', type=int, default=10)
     parser.add_argument('--benchmark-repeat', type=int, default=30)
@@ -523,6 +524,10 @@ def main():
     print("Loading model...")
     model = LLaDAModelLM.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
+
+    if args.compile:
+        print("Applying torch.compile (mode=reduce-overhead)...")
+        model = torch.compile(model, mode='reduce-overhead')
     prompt = "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?"
 
     m = [{"role": "user", "content": prompt}, ]
@@ -538,7 +543,8 @@ def main():
         
         mode = args.attention_mode
         w = args.local_window_size
-        print(f"Running mode: {mode} with w={w}")
+        compiled_tag = '_compiled' if args.compile else ''
+        print(f"Running mode: {mode}{compiled_tag} with w={w}")
         
         lat_list, nfe_val, tps, dec_tps, avg_lat, mem, text = run_experiment(model, tokenizer, input_ids, args, w=w, mode=mode)
         
@@ -552,7 +558,7 @@ def main():
             'nfe': nfe_val
         }
                 
-        out_path = os.path.join(args.output_dir, f'res_{mode}_w{w}.json')
+        out_path = os.path.join(args.output_dir, f'res_{mode}{compiled_tag}_w{w}.json')
         with open(out_path, 'w') as f:
             json.dump(results, f, indent=2)
         print(f"Saved results to {out_path}")
