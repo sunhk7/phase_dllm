@@ -1,0 +1,70 @@
+The argument `trust_remote_code` is to be used with Auto classes. It has no effect here and is ignored.
+/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:601: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`. This was detected when initializing the generation config instance, which means the corresponding file may hold incorrect parameterization and should be fixed.
+  warnings.warn(
+/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:601: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+Loading model...
+Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]Loading checkpoint shards:  17%|█▋        | 1/6 [00:00<00:00,  7.68it/s]Loading checkpoint shards:  33%|███▎      | 2/6 [00:00<00:00,  7.63it/s]Loading checkpoint shards:  50%|█████     | 3/6 [00:00<00:00,  7.46it/s]Loading checkpoint shards:  67%|██████▋   | 4/6 [00:00<00:00,  7.58it/s]Loading checkpoint shards:  83%|████████▎ | 5/6 [00:00<00:00,  7.69it/s]Loading checkpoint shards: 100%|██████████| 6/6 [00:00<00:00,  7.89it/s]Loading checkpoint shards: 100%|██████████| 6/6 [00:00<00:00,  7.74it/s]
+Running mode: swin_triton with w=8
+Traceback (most recent call last):
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/triton/language/core.py", line 35, in wrapper
+    return fn(*args, **kwargs)
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/triton/language/core.py", line 1534, in dot
+    return semantic.dot(input, other, acc, input_precision, max_num_imprecise_acc, out_dtype, _builder)
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/triton/language/semantic.py", line 1371, in dot
+    and rhs.shape[-1].value >= 16, \
+AssertionError: All non-batch values in both first input shape ([constexpr[8], constexpr[128]]) and second input shape ([constexpr[128], constexpr[8]]) must be >= 16!
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/root/phase_dllm/swin_fastdllm/generate.py", line 458, in <module>
+    main()
+  File "/root/phase_dllm/swin_fastdllm/generate.py", line 415, in main
+    lat_list, nfe_val, tps, dec_tps, avg_lat, mem, text = run_experiment(model, tokenizer, input_ids, args, w=w, mode=mode)
+  File "/root/phase_dllm/swin_fastdllm/generate.py", line 314, in run_experiment
+    _ = generate_with_dual_cache(
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+  File "/root/phase_dllm/swin_fastdllm/generate.py", line 138, in generate_with_dual_cache
+    logits_blk = model(
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/root/phase_dllm/swin_fastdllm/model/modeling_llada.py", line 1688, in forward
+    outputs = self.model.forward(
+  File "/root/phase_dllm/swin_fastdllm/model/modeling_llada.py", line 1585, in forward
+    x, cache = block(x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache,replace_position=replace_position)
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/root/phase_dllm/swin_fastdllm/model/modeling_llada.py", line 1072, in forward
+    att, cache = self.attention(q, k, v, attention_bias, layer_past=layer_past, use_cache=use_cache,replace_position=replace_position)
+  File "/root/phase_dllm/swin_fastdllm/model/modeling_llada.py", line 798, in attention
+    att = swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, self.layer_id)
+  File "/root/phase_dllm/swin_fastdllm/triton_swin_attn.py", line 114, in swin_triton_attention
+    _swin_win_attn_fwd[grid](
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/triton/runtime/jit.py", line 345, in <lambda>
+    return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/triton/runtime/jit.py", line 662, in run
+    kernel = self.compile(
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/triton/compiler/compiler.py", line 276, in compile
+    module = src.make_ir(options, codegen_fns, context)
+  File "/root/miniconda3/envs/dllm_env/lib/python3.10/site-packages/triton/compiler/compiler.py", line 113, in make_ir
+    return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns)
+triton.compiler.errors.CompilationError: at 47:9:
+    # ---- Load Q [W, DHEAD] from Q heads ----
+    q = tl.load(Q + b*stride_qb + h_q*stride_qh + safe[:, None]*stride_qs + d_idx[None, :]*stride_qd,
+                mask=valid[:, None], other=0.0)
+
+    # ---- Load K, V [W, DHEAD] from KV heads (no repeat_interleave!) ----
+    k = tl.load(K + b*stride_kb + h_kv*stride_kh + safe[:, None]*stride_ks + d_idx[None, :]*stride_kd,
+                mask=valid[:, None], other=0.0)
+    v = tl.load(V + b*stride_vb + h_kv*stride_vh + safe[:, None]*stride_vs + d_idx[None, :]*stride_vd,
+                mask=valid[:, None], other=0.0)
+
+    # ---- Attention scores [W, W] ----
+    qk = tl.dot(q, tl.trans(k)) * scale
+         ^

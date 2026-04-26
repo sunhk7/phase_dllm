@@ -79,6 +79,7 @@ def run_profile():
         ('swin_window',          'swin_window',  model),
         ('swin_window_compiled', 'swin_window',  compiled_model),
         ('swin_triton',          'swin_triton',  model),
+        ('swin_triton_compiled', 'swin_triton',  compiled_model),
     ]
 
     out_file = f"profiler_comparison_bl{block_length}.txt"

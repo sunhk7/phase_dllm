@@ -3,12 +3,13 @@
 # ============================================================
 # Usage:  bash run.sh [max-new-tokens] [block-length] [w]
 # 
-# 5 experiments on 5 GPUs:
+# 6 experiments on 6 GPUs:
 #   GPU 0: baseline
 #   GPU 1: local_window
 #   GPU 2: swin_window
 #   GPU 3: swin_window + torch.compile
 #   GPU 4: swin_triton  (fused Triton kernel)
+#   GPU 5: swin_triton + torch.compile  (best of both worlds)
 # ============================================================
 
 MAX_NEW_TOKENS=${1:-256}
@@ -19,7 +20,7 @@ SHIFT_SIZE=$(($W_SIZE / 2))
 OUT_DIR="results/${MAX_NEW_TOKENS}/${BLOCK_LENGTH}/${W_SIZE}"
 mkdir -p "$OUT_DIR"
 
-echo "Starting 5 parallel experiments..."
+echo "Starting 6 parallel experiments..."
 echo "Output Directory: $OUT_DIR"
 echo "Config: max_tokens=${MAX_NEW_TOKENS}, block_length=${BLOCK_LENGTH}, w=${W_SIZE}, shift=${SHIFT_SIZE}"
 echo "------------------------------------------------------"
@@ -46,10 +47,14 @@ echo "[GPU 4] swin_triton"
 CUDA_VISIBLE_DEVICES=4 python generate.py --attention-mode swin_triton $CMD_COMMON > "$OUT_DIR/log_swin_triton.txt" 2>&1 &
 P4=$!
 
-wait $P0 $P1 $P2 $P3 $P4
+echo "[GPU 5] swin_triton + compile"
+CUDA_VISIBLE_DEVICES=5 python generate.py --attention-mode swin_triton --compile $CMD_COMMON > "$OUT_DIR/log_swin_triton_compiled.txt" 2>&1 &
+P5=$!
+
+wait $P0 $P1 $P2 $P3 $P4 $P5
 
 echo "------------------------------------------------------"
-echo "All 5 experiments completed!"
+echo "All 6 experiments completed!"
 echo "Generating plots..."
 python plot_utils.py --w $W_SIZE --output-dir "$OUT_DIR"
 echo "Done! Results at: $OUT_DIR/"

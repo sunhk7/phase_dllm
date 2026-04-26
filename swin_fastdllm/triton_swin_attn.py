@@ -1,9 +1,10 @@
 """
-Fused Swin Windowed Attention via OpenAI Triton — with native GQA support.
+Fully-optimised Swin Windowed Attention — Triton kernels + zero-copy GQA.
 
-Replaces the fragmented PyTorch ops (repeat_interleave + F.pad → view → matmul → max → exp → sum → div)
-with a single GPU kernel launch per window batch. K/V heads are indexed via h_kv = h_q // gqa_ratio,
-avoiding all physical memory copies.
+Three fused stages:
+  1. _swin_win_attn_fwd  : pad → window partition → attention  (Triton, native GQA)
+  2. Prefix attention     : grouped-broadcast matmul (zero-copy GQA, no expand/reshape)
+  3. _lse_combine_fwd     : α·out_win + β·out_pref with fused LogSumExp (Triton)
 """
 import torch
 import triton
@@ -11,11 +12,14 @@ import triton.language as tl
 import math
 
 
+# =====================================================================
+#  Kernel 1: Windowed Attention with native GQA
+# =====================================================================
 @triton.jit
 def _swin_win_attn_fwd(
     Q, K, V, Out, Lse,
-    D,  # original sequence length
-    GQA_RATIO: tl.constexpr,  # num_q_heads // num_kv_heads (e.g. 4)
+    D,
+    GQA_RATIO: tl.constexpr,
     stride_qb, stride_qh, stride_qs, stride_qd,
     stride_kb, stride_kh, stride_ks, stride_kd,
     stride_vb, stride_vh, stride_vs, stride_vd,
@@ -25,43 +29,33 @@ def _swin_win_attn_fwd(
     W: tl.constexpr,
     DHEAD: tl.constexpr,
     NUM_WIN: tl.constexpr,
-    H_Q: tl.constexpr,   # number of Q heads (e.g. 32)
+    H_Q: tl.constexpr,
 ):
-    """Each program instance handles one (batch, q_head, window)."""
     pid = tl.program_id(0)
     b   = pid // (H_Q * NUM_WIN)
-    rem = pid % (H_Q * NUM_WIN)
+    rem = pid %  (H_Q * NUM_WIN)
     h_q = rem // NUM_WIN
-    wid = rem % NUM_WIN
-
-    # GQA: map Q head → KV head
+    wid = rem %  NUM_WIN
     h_kv = h_q // GQA_RATIO
 
     scale = 1.0 / tl.sqrt(DHEAD + 0.0)
-
     pos   = tl.arange(0, W)
     d_idx = tl.arange(0, DHEAD)
 
-    # Map padded window positions → original positions
     orig  = wid * W + pos - SHIFT
     valid = (orig >= 0) & (orig < D)
     safe  = tl.where(valid, orig, 0)
 
-    # ---- Load Q [W, DHEAD] from Q heads ----
-    q = tl.load(Q + b*stride_qb + h_q*stride_qh + safe[:, None]*stride_qs + d_idx[None, :]*stride_qd,
+    q = tl.load(Q + b*stride_qb + h_q*stride_qh  + safe[:, None]*stride_qs + d_idx[None, :]*stride_qd,
                 mask=valid[:, None], other=0.0)
-
-    # ---- Load K, V [W, DHEAD] from KV heads (no repeat_interleave!) ----
     k = tl.load(K + b*stride_kb + h_kv*stride_kh + safe[:, None]*stride_ks + d_idx[None, :]*stride_kd,
                 mask=valid[:, None], other=0.0)
     v = tl.load(V + b*stride_vb + h_kv*stride_vh + safe[:, None]*stride_vs + d_idx[None, :]*stride_vd,
                 mask=valid[:, None], other=0.0)
 
-    # ---- Attention scores [W, W] ----
     qk = tl.dot(q, tl.trans(k)) * scale
     qk = tl.where(valid[None, :] & valid[:, None], qk, float('-inf'))
 
-    # ---- Softmax ----
     row_max = tl.max(qk, axis=1)
     row_max = tl.where(valid, row_max, 0.0)
     exp_qk  = tl.exp(qk - row_max[:, None])
@@ -69,72 +63,127 @@ def _swin_win_attn_fwd(
     row_sum  = tl.sum(exp_qk, axis=1)
     row_sum  = tl.where(valid, row_sum, 1.0)
 
-    # ---- Output [W, DHEAD] ----
     out = tl.dot(exp_qk.to(v.dtype), v)
     out = out / row_sum[:, None]
 
     lse = row_max + tl.log(row_sum)
     lse = tl.where(valid, lse, float('-inf'))
 
-    # ---- Store (indexed by Q head) ----
     tl.store(Out + b*stride_ob + h_q*stride_oh + safe[:, None]*stride_os + d_idx[None, :]*stride_od,
              out.to(tl.bfloat16), mask=valid[:, None])
     tl.store(Lse + b*stride_lb + h_q*stride_lh + safe*stride_ls,
              lse, mask=valid)
 
 
-# ---------------------------------------------------------------------------
+# =====================================================================
+#  Kernel 2: Fused LogSumExp Combination
+#    result = exp(lse_w - lse_total) * out_w + exp(lse_p - lse_total) * out_p
+# =====================================================================
+@triton.jit
+def _lse_combine_fwd(
+    OUT_W, OUT_P, LSE_W, LSE_P, RESULT,
+    DHEAD: tl.constexpr,
+):
+    """Each program handles one (b, h, s) position → DHEAD values."""
+    row = tl.program_id(0)
+    d_idx = tl.arange(0, DHEAD)
+
+    lw = tl.load(LSE_W + row)
+    lp = tl.load(LSE_P + row)
+
+    # Numerically stable logaddexp
+    m = tl.maximum(lw, lp)
+    lse = m + tl.log(tl.exp(lw - m) + tl.exp(lp - m))
+
+    alpha = tl.exp(lw - lse)
+    beta  = tl.exp(lp - lse)
+
+    ow = tl.load(OUT_W + row * DHEAD + d_idx).to(tl.float32)
+    op = tl.load(OUT_P + row * DHEAD + d_idx).to(tl.float32)
+
+    r = alpha * ow + beta * op
+    tl.store(RESULT + row * DHEAD + d_idx, r.to(tl.bfloat16))
+
+
+# =====================================================================
 #  Python wrapper
-# ---------------------------------------------------------------------------
+# =====================================================================
 def swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, layer_id):
     """
-    Args (GQA-aware: Q has more heads than K/V)
-        q           : [B, H_Q,  D, d_head]   (e.g. H_Q=32)
-        k_block/v_block : [B, H_KV, D, d_head]   (e.g. H_KV=8, NOT expanded)
+    Fully-fused Swin attention with native GQA everywhere.
+
+    Args (GQA-aware: Q has more heads than K/V):
+        q               : [B, H_Q,  D, d_head]
+        k_block/v_block : [B, H_KV, D, d_head]   (NOT expanded)
         k_prefix/v_prefix : [B, H_KV, P, d_head]
         w  : window size (>= 16, power-of-2)
         S  : shift amount
         layer_id : even/odd determines shift
-    Returns
-        att : [B, H_Q, D, d_head]
     """
     B, H_Q, D, d_head = q.shape
     H_KV = k_block.shape[1]
-    GQA_RATIO = H_Q // H_KV
+    GQA  = H_Q // H_KV
+    P    = k_prefix.shape[2]
 
     shift   = S if layer_id % 2 == 1 else 0
     padded  = D + 2 * shift if shift > 0 else D
     num_win = padded // w
 
-    # ---- 1. Triton kernel: windowed attention (native GQA) ----
+    # ================================================================
+    #  Stage 1: Windowed attention (Triton kernel, native GQA)
+    # ================================================================
     out_win = torch.zeros_like(q)
     lse_win = torch.full((B, H_Q, D), float('-inf'), device=q.device, dtype=torch.float32)
 
     grid = (B * H_Q * num_win,)
     _swin_win_attn_fwd[grid](
         q, k_block, v_block, out_win, lse_win,
-        D, GQA_RATIO,
+        D, GQA,
         *q.stride(), *k_block.stride(), *v_block.stride(), *out_win.stride(),
         lse_win.stride(0), lse_win.stride(1), lse_win.stride(2),
         SHIFT=shift, W=w, DHEAD=d_head, NUM_WIN=num_win, H_Q=H_Q,
     )
 
-    # ---- 2. Prefix attention (native GQA via expand, no physical copy) ----
+    # ================================================================
+    #  Stage 2: Prefix attention (grouped broadcast — zero-copy GQA)
+    # ================================================================
     scale = 1.0 / math.sqrt(d_head)
-    # Expand KV to match Q heads via broadcast (zero-copy view)
-    k_pref_exp = k_prefix.unsqueeze(2).expand(B, H_KV, GQA_RATIO, -1, d_head).reshape(B, H_Q, -1, d_head)
-    v_pref_exp = v_prefix.unsqueeze(2).expand(B, H_KV, GQA_RATIO, -1, d_head).reshape(B, H_Q, -1, d_head)
 
-    s_p      = torch.matmul(q, k_pref_exp.transpose(-1, -2)) * scale
-    max_p    = s_p.max(dim=-1).values
-    exp_p    = torch.exp(s_p - max_p.unsqueeze(-1))
-    sum_p    = exp_p.sum(dim=-1)
-    lse_pref = max_p + torch.log(sum_p)
-    out_pref = torch.matmul(exp_p, v_pref_exp) / sum_p.unsqueeze(-1)
+    # q grouped: [B, H_KV, GQA, D, d]
+    q_g = q.view(B, H_KV, GQA, D, d_head)
 
-    # ---- 3. LogSumExp combination ----
-    lse_total = torch.logaddexp(lse_win, lse_pref)
-    alpha = torch.exp(lse_win  - lse_total).unsqueeze(-1)
-    beta  = torch.exp(lse_pref - lse_total).unsqueeze(-1)
+    # K^T broadcast: [B, H_KV, 1, d, P]  (unsqueeze is zero-copy)
+    k_t = k_prefix.transpose(-1, -2).unsqueeze(2)
 
-    return (alpha * out_win + beta * out_pref).to(q.dtype)
+    # Scores via broadcast: [B, H_KV, GQA, D, P]  (no expand/reshape copy!)
+    s_p = torch.matmul(q_g, k_t) * scale
+
+    # Softmax in f32 for stability
+    s_p_f32 = s_p.float()
+    max_s   = s_p_f32.max(dim=-1, keepdim=True).values
+    exp_s   = (s_p_f32 - max_s).exp()
+    sum_s   = exp_s.sum(dim=-1, keepdim=True)
+
+    lse_pref = (max_s + sum_s.log()).squeeze(-1).reshape(B, H_Q, D)  # [B, H_Q, D]
+
+    # V broadcast: [B, H_KV, 1, P, d]
+    v_u = v_prefix.unsqueeze(2)
+    out_pref = torch.matmul(exp_s.to(q.dtype), v_u) / sum_s.to(q.dtype)  # [B, H_KV, GQA, D, d]
+    out_pref = out_pref.reshape(B, H_Q, D, d_head)
+
+    # ================================================================
+    #  Stage 3: Fused LogSumExp combination (Triton kernel)
+    # ================================================================
+    N = B * H_Q * D
+    result = torch.empty_like(q)
+
+    _lse_combine_fwd[(N,)](
+        out_win.reshape(-1),        # contiguous flat
+        out_pref.contiguous().reshape(-1),
+        lse_win.reshape(-1),
+        lse_pref.contiguous().reshape(-1),
+        result.reshape(-1),
+        DHEAD=d_head,
+    )
+
+    return result

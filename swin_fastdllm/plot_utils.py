@@ -7,13 +7,14 @@ import argparse
 def plot_single_window_size(w, save_dir='results'):
     os.makedirs(save_dir, exist_ok=True)
     
-    # 5 个对比项
+    # 6 个对比项
     mode_keys = [
         ('baseline',             f'res_baseline_w{w}.json',              'Baseline'),
         ('local_window',         f'res_local_window_w{w}.json',          'Local Window'),
         ('swin_window',          f'res_swin_window_w{w}.json',           'Swin Window'),
         ('swin_window_compiled', f'res_swin_window_compiled_w{w}.json',  'Swin+Compile'),
         ('swin_triton',          f'res_swin_triton_w{w}.json',           'Swin+Triton'),
+        ('swin_triton_compiled', f'res_swin_triton_compiled_w{w}.json',  'Triton+Compile'),
     ]
     
     results = {}
@@ -42,7 +43,7 @@ def plot_single_window_size(w, save_dir='results'):
     palette = {
         'baseline': '#1f77b4', 'local_window': '#aec7e8',
         'swin_window': '#ff7f0e', 'swin_window_compiled': '#2ca02c',
-        'swin_triton': '#d62728',
+        'swin_triton': '#d62728', 'swin_triton_compiled': '#9467bd',
     }
     colors = [palette.get(k, '#999999') for k, _ in labels]
     
