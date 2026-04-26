@@ -132,7 +132,7 @@ def swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, layer_i
     # ================================================================
     #  Stage 1: Windowed attention (Triton kernel, native GQA)
     # ================================================================
-    out_win = torch.zeros_like(q)
+    out_win = torch.zeros((B, H_Q, D, d_head), device=q.device, dtype=q.dtype)
     lse_win = torch.full((B, H_Q, D), float('-inf'), device=q.device, dtype=torch.float32)
 
     grid = (B * H_Q * num_win,)
@@ -175,15 +175,16 @@ def swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, layer_i
     #  Stage 3: Fused LogSumExp combination (Triton kernel)
     # ================================================================
     N = B * H_Q * D
-    result = torch.empty_like(q)
+    result = torch.empty((B, H_Q, D, d_head), device=q.device, dtype=q.dtype)
 
     _lse_combine_fwd[(N,)](
-        out_win.reshape(-1),        # contiguous flat
-        out_pref.contiguous().reshape(-1),
-        lse_win.reshape(-1),
-        lse_pref.contiguous().reshape(-1),
-        result.reshape(-1),
+        out_win,
+        out_pref.contiguous(),
+        lse_win,
+        lse_pref.contiguous(),
+        result,
         DHEAD=d_head,
     )
 
-    return result
+    # Return result with original `q` strides to match standard PyTorch flow
+    return result.view(q.shape)
