@@ -46,11 +46,11 @@ def _swin_win_attn_fwd(
     valid = (orig >= 0) & (orig < D)
     safe  = tl.where(valid, orig, 0)
 
-    q = tl.load(Q + b*stride_qb + h_q*stride_qh  + safe[:, None]*stride_qs + d_idx[None, :]*stride_qd,
+    q = tl.load(Q + b*stride_qb + h_q*stride_qh  + safe[:, None]*stride_qs + d_idx[None, :],
                 mask=valid[:, None], other=0.0)
-    k = tl.load(K + b*stride_kb + h_kv*stride_kh + safe[:, None]*stride_ks + d_idx[None, :]*stride_kd,
+    k = tl.load(K + b*stride_kb + h_kv*stride_kh + safe[:, None]*stride_ks + d_idx[None, :],
                 mask=valid[:, None], other=0.0)
-    v = tl.load(V + b*stride_vb + h_kv*stride_vh + safe[:, None]*stride_vs + d_idx[None, :]*stride_vd,
+    v = tl.load(V + b*stride_vb + h_kv*stride_vh + safe[:, None]*stride_vs + d_idx[None, :],
                 mask=valid[:, None], other=0.0)
 
     qk = tl.dot(q, tl.trans(k)) * scale
@@ -69,27 +69,37 @@ def _swin_win_attn_fwd(
     lse = row_max + tl.log(row_sum)
     lse = tl.where(valid, lse, float('-inf'))
 
-    tl.store(Out + b*stride_ob + h_q*stride_oh + safe[:, None]*stride_os + d_idx[None, :]*stride_od,
+    tl.store(Out + b*stride_ob + h_q*stride_oh + safe[:, None]*stride_os + d_idx[None, :],
              out.to(tl.bfloat16), mask=valid[:, None])
-    tl.store(Lse + b*stride_lb + h_q*stride_lh + safe*stride_ls,
+    tl.store(Lse + b*stride_lb + h_q*stride_lh + safe,
              lse, mask=valid)
 
 
 # =====================================================================
 #  Kernel 2: Fused LogSumExp Combination
-#    result = exp(lse_w - lse_total) * out_w + exp(lse_p - lse_total) * out_p
 # =====================================================================
 @triton.jit
 def _lse_combine_fwd(
     OUT_W, OUT_P, LSE_W, LSE_P, RESULT,
+    stride_wb, stride_wh, stride_wd, stride_wdhead,
+    stride_pb, stride_ph, stride_pd, stride_pdhead,
+    stride_lb, stride_lh, stride_ld,
+    stride_rb, stride_rh, stride_rd, stride_rdhead,
+    H_Q: tl.constexpr,
+    D: tl.constexpr,
     DHEAD: tl.constexpr,
 ):
-    """Each program handles one (b, h, s) position → DHEAD values."""
-    row = tl.program_id(0)
+    pid = tl.program_id(0)
+    b = pid // (H_Q * D)
+    rem = pid % (H_Q * D)
+    h = rem // D
+    s = rem % D
     d_idx = tl.arange(0, DHEAD)
 
-    lw = tl.load(LSE_W + row)
-    lp = tl.load(LSE_P + row)
+    # 1. Load LSE
+    lse_idx = b * stride_lb + h * stride_lh + s
+    lw = tl.load(LSE_W + lse_idx)
+    lp = tl.load(LSE_P + lse_idx)
 
     # Numerically stable logaddexp
     m = tl.maximum(lw, lp)
@@ -98,11 +108,18 @@ def _lse_combine_fwd(
     alpha = tl.exp(lw - lse)
     beta  = tl.exp(lp - lse)
 
-    ow = tl.load(OUT_W + row * DHEAD + d_idx).to(tl.float32)
-    op = tl.load(OUT_P + row * DHEAD + d_idx).to(tl.float32)
+    # 2. Load and combine values using specific strides
+    wd_idx = b * stride_wb + h * stride_wh + s * stride_wd + d_idx
+    pd_idx = b * stride_pb + h * stride_ph + s * stride_pd + d_idx
+    
+    ow = tl.load(OUT_W + wd_idx).to(tl.float32)
+    op = tl.load(OUT_P + pd_idx).to(tl.float32)
 
     r = alpha * ow + beta * op
-    tl.store(RESULT + row * DHEAD + d_idx, r.to(tl.bfloat16))
+    
+    # 3. Store directly into the final tensor
+    res_idx = b * stride_rb + h * stride_rh + s * stride_rd + d_idx
+    tl.store(RESULT + res_idx, r.to(tl.bfloat16))
 
 
 # =====================================================================
@@ -132,7 +149,8 @@ def swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, layer_i
     # ================================================================
     #  Stage 1: Windowed attention (Triton kernel, native GQA)
     # ================================================================
-    out_win = torch.zeros((B, H_Q, D, d_head), device=q.device, dtype=q.dtype)
+    out_win = torch.empty_like(q)
+    out_win.fill_(0)  # Safe initialization, preserves strides
     lse_win = torch.full((B, H_Q, D), float('-inf'), device=q.device, dtype=torch.float32)
 
     grid = (B * H_Q * num_win,)
@@ -175,16 +193,19 @@ def swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, layer_i
     #  Stage 3: Fused LogSumExp combination (Triton kernel)
     # ================================================================
     N = B * H_Q * D
-    result = torch.empty((B, H_Q, D, d_head), device=q.device, dtype=q.dtype)
+    result = torch.empty_like(q)
 
     _lse_combine_fwd[(N,)](
         out_win,
-        out_pref.contiguous(),
+        out_pref,
         lse_win,
-        lse_pref.contiguous(),
+        lse_pref,
         result,
-        DHEAD=d_head,
+        *out_win.stride(),
+        *out_pref.stride(),
+        *lse_win.stride(),
+        *result.stride(),
+        H_Q=H_Q, D=D, DHEAD=d_head,
     )
 
-    # Return result with original `q` strides to match standard PyTorch flow
-    return result.view(q.shape)
+    return result
