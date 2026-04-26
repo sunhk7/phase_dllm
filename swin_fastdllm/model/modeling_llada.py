@@ -791,21 +791,21 @@ class LLaDABlock(nn.Module):
             
             d_head = q.shape[-1]
             scale = 1.0 / math.sqrt(d_head)
-            
-            num_kv_h = k.size(1)
-            num_q_h = q.size(1)
-            if num_q_h != num_kv_h:
-                k_prefix = k_prefix.repeat_interleave(num_q_h // num_kv_h, dim=1)
-                v_prefix = v_prefix.repeat_interleave(num_q_h // num_kv_h, dim=1)
-                k_block = k_block.repeat_interleave(num_q_h // num_kv_h, dim=1)
-                v_block = v_block.repeat_interleave(num_q_h // num_kv_h, dim=1)
 
-            # ---- Triton fused path: single kernel launch ----
+            # ---- Triton fused path: native GQA, NO repeat_interleave ----
             if mode == 'swin_triton':
                 from triton_swin_attn import swin_triton_attention
                 att = swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, self.layer_id)
             else:
-                # ---- Existing PyTorch manual path ----
+                # ---- Existing PyTorch manual path (needs GQA expansion) ----
+                num_kv_h = k.size(1)
+                num_q_h = q.size(1)
+                if num_q_h != num_kv_h:
+                    k_prefix = k_prefix.repeat_interleave(num_q_h // num_kv_h, dim=1)
+                    v_prefix = v_prefix.repeat_interleave(num_q_h // num_kv_h, dim=1)
+                    k_block = k_block.repeat_interleave(num_q_h // num_kv_h, dim=1)
+                    v_block = v_block.repeat_interleave(num_q_h // num_kv_h, dim=1)
+
                 scores_prefix = torch.matmul(q, k_prefix.transpose(-1, -2)) * scale
                 
                 if mode == 'swin_window' and self.layer_id % 2 == 1:
