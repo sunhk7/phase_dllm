@@ -115,10 +115,15 @@ def main():
     samples = load_pg19_samples(tokenizer, args.seq_len, total_needed)
     print(f"Loaded {len(samples)} samples (seq_len={args.seq_len})")
 
-    # Warmup
+    # Warmup (inside inference_mode to trigger Triton JIT compilation)
+    import gc
     print(f"Warming up ({args.warmup} samples)...")
-    for i in range(min(args.warmup, len(samples))):
-        _ = evaluate_sample(model, samples[i], gen_length, args.block_length, args.steps)
+    with torch.inference_mode():
+        for i in range(min(args.warmup, len(samples))):
+            _ = evaluate_sample(model, samples[i], gen_length, args.block_length, args.steps)
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
 
     # Evaluate
     accs, tps_list, lat_list, nfe_list = [], [], [], []
