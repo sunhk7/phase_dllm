@@ -295,63 +295,78 @@ def get_transfer_index_dynamic(logits, temperature, remasking, mask_index, x, nu
     return x0, transfer_index
 
 def run_experiment(model, tokenizer, input_ids, args, w=None, mode=None):
+    import gc
     if w is not None:
         model.model.config.local_window_size = w
         model.model.config.shift_size = w // 2
     if mode is not None:
         model.model.config.attention_mode = mode
 
-    # Use CLI args directly (config defaults are stale)
     c_steps = getattr(model.model.config, 'steps', 128)
     c_block_len = args.block_length
     c_temp = getattr(model.model.config, 'temperature', 0.0)
     c_remask = getattr(model.model.config, 'remasking', 'low_confidence')
 
-    # Warmup
-    if args.benchmark_warmup_steps > 0:
+    # ---- Warmup (inside inference_mode to match benchmark conditions) ----
+    # This also triggers Triton JIT compilation so it doesn't pollute benchmarks
+    with torch.inference_mode():
         for _ in range(args.benchmark_warmup_steps):
             _ = generate_with_dual_cache(
-                model, input_ids, steps=c_steps, gen_length=args.max_new_tokens, 
+                model, input_ids, steps=c_steps, gen_length=args.max_new_tokens,
                 block_length=c_block_len, temperature=c_temp, remasking=c_remask
             )
-            
+
+    # ---- Stabilize GPU state ----
+    gc.collect()
+    torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     torch.cuda.synchronize()
-    
-    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(args.benchmark_repeat)]
-    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(args.benchmark_repeat)]
-    
-    latency_list = []
-    prefill_list = []
-    decode_list = []
-    
+
+    # ---- Benchmark ----
+    DISCARD = 3  # discard first N iterations (cold cache, P-State ramping)
+    total_iters = args.benchmark_repeat + DISCARD
+
+    raw_latencies = []
+    raw_prefill = []
+    raw_decode = []
+
     with torch.inference_mode():
-        for i in range(args.benchmark_repeat):
+        for i in range(total_iters):
             torch.cuda.synchronize()
-            start_events[i].record()
+            ev_s = torch.cuda.Event(enable_timing=True)
+            ev_e = torch.cuda.Event(enable_timing=True)
+            ev_s.record()
             out, nfe, p_time, d_time = generate_with_dual_cache(
-                model, input_ids, steps=c_steps, gen_length=args.max_new_tokens, 
+                model, input_ids, steps=c_steps, gen_length=args.max_new_tokens,
                 block_length=c_block_len, temperature=c_temp, remasking=c_remask
             )
-            end_events[i].record()
+            ev_e.record()
             torch.cuda.synchronize()
-            prefill_list.append(p_time)
-            decode_list.append(d_time)
-            
-    for i in range(args.benchmark_repeat):
-        latency_list.append(start_events[i].elapsed_time(end_events[i]) / 1000.0) # seconds
-        
-    avg_latency = sum(latency_list) / len(latency_list)
-    avg_prefill = sum(prefill_list) / len(prefill_list)
-    avg_decode = sum(decode_list) / len(decode_list)
-    
-    tokens_per_sec = args.max_new_tokens / avg_latency
-    decode_tokens_per_sec = args.max_new_tokens / avg_decode if avg_decode > 0 else 0
-    
-    max_mem = torch.cuda.max_memory_allocated() / (1024**2) # MB
-    
+            lat = ev_s.elapsed_time(ev_e) / 1000.0
+            raw_latencies.append(lat)
+            raw_prefill.append(p_time)
+            raw_decode.append(d_time)
+
+    # Discard first N
+    latency_list = raw_latencies[DISCARD:]
+    prefill_list = raw_prefill[DISCARD:]
+    decode_list = raw_decode[DISCARD:]
+
+    # Use median for robustness against outliers
+    latency_list_sorted = sorted(latency_list)
+    mid = len(latency_list_sorted) // 2
+    median_latency = latency_list_sorted[mid]
+
+    decode_sorted = sorted(decode_list)
+    median_decode = decode_sorted[len(decode_sorted) // 2]
+
+    tokens_per_sec = args.max_new_tokens / median_latency
+    decode_tokens_per_sec = args.max_new_tokens / median_decode if median_decode > 0 else 0
+
+    max_mem = torch.cuda.max_memory_allocated() / (1024**2)
+
     text = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
-    return latency_list, nfe, tokens_per_sec, decode_tokens_per_sec, avg_latency, max_mem, text
+    return latency_list, nfe, tokens_per_sec, decode_tokens_per_sec, median_latency, max_mem, text
 
 
 def main():
