@@ -782,12 +782,17 @@ class LLaDABlock(nn.Module):
         if is_current_decoding_block and mode in ['local_window', 'swin_window', 'swin_triton']:
             w = getattr(self.config, 'local_window_size', 8)
             S = getattr(self.config, 'shift_size', 4)
-            s = KV_T - D
             
-            k_prefix = k[:, :, :s, :]
-            v_prefix = v[:, :, :s, :]
-            k_block = k[:, :, s:, :]
-            v_block = v[:, :, s:, :]
+            # Retrieve the exact start position of the current block from replace_position
+            if replace_position.any():
+                s = replace_position.nonzero(as_tuple=True)[1].min().item()
+            else:
+                s = KV_T - D  # Fallback
+            
+            k_prefix = torch.cat([k[:, :, :s, :], k[:, :, s+D:, :]], dim=2)
+            v_prefix = torch.cat([v[:, :, :s, :], v[:, :, s+D:, :]], dim=2)
+            k_block = k[:, :, s:s+D, :]
+            v_block = v[:, :, s:s+D, :]
             
             d_head = q.shape[-1]
             scale = 1.0 / math.sqrt(d_head)
