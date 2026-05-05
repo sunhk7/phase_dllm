@@ -74,7 +74,7 @@ def plot_eval_results(output_dir, w):
         fig, ax1 = plt.subplots(figsize=(12, 7))
         bar_w = 0.35
 
-        bars_ppl = ax1.bar(x - bar_w / 2, ppls, bar_w, color=colors,
+        bars_ppl = ax1.bar(x - bar_w / 2, ppls, bar_w, color='#1f77b4',
                            alpha=0.85, label='PPL ↓')
         ax1.set_ylabel('Perplexity (PPL) ↓')
         ax1.set_ylim(0, max(ppls) * 1.3 if max(ppls) > 0 else 100)
@@ -87,7 +87,7 @@ def plot_eval_results(output_dir, w):
                      va='bottom', ha='center', fontsize=9)
 
         ax2 = ax1.twinx()
-        bars_tps = ax2.bar(x + bar_w / 2, tps, bar_w, color=colors,
+        bars_tps = ax2.bar(x + bar_w / 2, tps, bar_w, color='#ff7f0e',
                            alpha=0.4, label='Tokens/s ↑')
         ax2.set_ylabel('Tokens / s ↑')
 
@@ -99,10 +99,10 @@ def plot_eval_results(output_dir, w):
         lines_1, labels_1 = ax1.get_legend_handles_labels()
         lines_2, labels_2 = ax2.get_legend_handles_labels()
         ax1.legend(lines_1 + lines_2, labels_1 + labels_2,
-                   loc='upper center', bbox_to_anchor=(0.5, 1.12), ncol=2)
+                   loc='lower center', bbox_to_anchor=(0.5, 1.05), ncol=2)
         ax1.set_title(f'PG19: Quality vs Speed Tradeoff\n'
                       f'(seq_len={seq_len}, block={bl}, w={w}, steps={steps})',
-                      pad=30)
+                      pad=45)
 
         plt.savefig(os.path.join(output_dir, f'eval_ppl_speed_w{w}.png'),
                     bbox_inches='tight', dpi=150)
@@ -115,7 +115,7 @@ def plot_eval_results(output_dir, w):
     fig, ax1 = plt.subplots(figsize=(12, 7))
     bar_w = 0.35
 
-    bars_acc = ax1.bar(x - bar_w / 2, accs, bar_w, color=colors,
+    bars_acc = ax1.bar(x - bar_w / 2, accs, bar_w, color='#2ca02c',
                        alpha=0.85, label='Accuracy (%)')
     ax1.set_ylabel('Top-1 Accuracy (%)')
     ax1.set_ylim(0, max(accs) * 1.3 if max(accs) > 0 else 100)
@@ -128,7 +128,7 @@ def plot_eval_results(output_dir, w):
                  va='bottom', ha='center', fontsize=9)
 
     ax2 = ax1.twinx()
-    bars_tps = ax2.bar(x + bar_w / 2, tps, bar_w, color=colors,
+    bars_tps = ax2.bar(x + bar_w / 2, tps, bar_w, color='#ff7f0e',
                        alpha=0.4, label='Tokens/s')
     ax2.set_ylabel('Tokens / s')
 
@@ -140,10 +140,10 @@ def plot_eval_results(output_dir, w):
     lines_1, labels_1 = ax1.get_legend_handles_labels()
     lines_2, labels_2 = ax2.get_legend_handles_labels()
     ax1.legend(lines_1 + lines_2, labels_1 + labels_2,
-               loc='upper center', bbox_to_anchor=(0.5, 1.12), ncol=2)
+               loc='lower center', bbox_to_anchor=(0.5, 1.05), ncol=2)
     ax1.set_title(f'PG19: Accuracy & Speed\n'
                   f'(seq_len={seq_len}, block={bl}, w={w}, steps={steps})',
-                  pad=30)
+                  pad=45)
 
     plt.savefig(os.path.join(output_dir, f'eval_accuracy_speed_w{w}.png'),
                 bbox_inches='tight', dpi=150)

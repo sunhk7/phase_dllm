@@ -53,8 +53,8 @@ def plot_single_window_size(w, save_dir='results'):
     fig, ax1 = plt.subplots(figsize=(13, 7))
     bar_width = 0.35
     
-    bars1 = ax1.bar(x - bar_width/2, dec_tps, bar_width, color=colors, label='Decode Tokens/s', alpha=0.85)
-    bars2 = ax1.bar(x + bar_width/2, tps, bar_width, color=colors, label='E2E Tokens/s', alpha=0.5)
+    bars1 = ax1.bar(x - bar_width/2, dec_tps, bar_width, color='#1f77b4', label='Decode Tokens/s', alpha=0.85)
+    bars2 = ax1.bar(x + bar_width/2, tps, bar_width, color='#ff7f0e', label='E2E Tokens/s', alpha=0.85)
     
     ax1.set_ylabel('Tokens / s')
     ax1.set_xticks(x)
@@ -74,9 +74,9 @@ def plot_single_window_size(w, save_dir='results'):
     
     lines_1, labels_1 = ax1.get_legend_handles_labels()
     lines_2, labels_2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper center', 
-               bbox_to_anchor=(0.5, 1.15), ncol=3)
-    ax1.set_title(f'Throughput & Latency (w={w})', pad=30)
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower center', 
+               bbox_to_anchor=(0.5, 1.05), ncol=3)
+    ax1.set_title(f'Throughput & Latency (w={w})', pad=40)
     
     plt.savefig(os.path.join(save_dir, f'throughput_latency_w{w}.png'), bbox_inches='tight', dpi=150)
     plt.close()
