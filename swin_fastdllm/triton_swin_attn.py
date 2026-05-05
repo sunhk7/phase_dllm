@@ -167,27 +167,31 @@ def swin_triton_attention(q, k_block, v_block, k_prefix, v_prefix, w, S, layer_i
     # ================================================================
     scale = 1.0 / math.sqrt(d_head)
 
-    # q grouped: [B, H_KV, GQA, D, d]
-    q_g = q.view(B, H_KV, GQA, D, d_head)
+    if P > 0:
+        # q grouped: [B, H_KV, GQA, D, d]
+        q_g = q.view(B, H_KV, GQA, D, d_head)
 
-    # K^T broadcast: [B, H_KV, 1, d, P]  (unsqueeze is zero-copy)
-    k_t = k_prefix.transpose(-1, -2).unsqueeze(2)
+        # K^T broadcast: [B, H_KV, 1, d, P]  (unsqueeze is zero-copy)
+        k_t = k_prefix.transpose(-1, -2).unsqueeze(2)
 
-    # Scores via broadcast: [B, H_KV, GQA, D, P]  (no expand/reshape copy!)
-    s_p = torch.matmul(q_g, k_t) * scale
+        # Scores via broadcast: [B, H_KV, GQA, D, P]  (no expand/reshape copy!)
+        s_p = torch.matmul(q_g, k_t) * scale
 
-    # Softmax in f32 for stability
-    s_p_f32 = s_p.float()
-    max_s   = s_p_f32.max(dim=-1, keepdim=True).values
-    exp_s   = (s_p_f32 - max_s).exp()
-    sum_s   = exp_s.sum(dim=-1, keepdim=True)
+        # Softmax in f32 for stability
+        s_p_f32 = s_p.float()
+        max_s   = s_p_f32.max(dim=-1, keepdim=True).values
+        exp_s   = (s_p_f32 - max_s).exp()
+        sum_s   = exp_s.sum(dim=-1, keepdim=True)
 
-    lse_pref = (max_s + sum_s.log()).squeeze(-1).reshape(B, H_Q, D)  # [B, H_Q, D]
+        lse_pref = (max_s + sum_s.log()).squeeze(-1).reshape(B, H_Q, D)  # [B, H_Q, D]
 
-    # V broadcast: [B, H_KV, 1, P, d]
-    v_u = v_prefix.unsqueeze(2)
-    out_pref = torch.matmul(exp_s.to(q.dtype), v_u) / sum_s.to(q.dtype)  # [B, H_KV, GQA, D, d]
-    out_pref = out_pref.reshape(B, H_Q, D, d_head)
+        # V broadcast: [B, H_KV, 1, P, d]
+        v_u = v_prefix.unsqueeze(2)
+        out_pref = torch.matmul(exp_s.to(q.dtype), v_u) / sum_s.to(q.dtype)  # [B, H_KV, GQA, D, d]
+        out_pref = out_pref.reshape(B, H_Q, D, d_head)
+    else:
+        lse_pref = torch.full((B, H_Q, D), float('-inf'), device=q.device, dtype=torch.float32)
+        out_pref = torch.zeros_like(q)
 
     # ================================================================
     #  Stage 3: Fused LogSumExp combination (Triton kernel)

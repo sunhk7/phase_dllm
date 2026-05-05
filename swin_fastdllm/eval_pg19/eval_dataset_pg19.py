@@ -40,7 +40,7 @@ from generate import generate_with_dual_cache
 
 def load_pg19_samples(tokenizer, seq_len, num_samples):
     """从 PG19 test split 加载 num_samples 条数据，每条截取 seq_len 个 token。"""
-    ds = load_dataset("deepmind/pg19", split="test", streaming=True, trust_remote_code=True)
+    ds = load_dataset("emozilla/pg19", split="test", streaming=True)
     samples = []
     for item in ds:
         ids = tokenizer.encode(item["text"], add_special_tokens=False)
@@ -228,8 +228,8 @@ def main():
     if args.steps is None:
         args.steps = gen_length
 
-    assert args.seq_len > gen_length, \
-        f"seq_len ({args.seq_len}) must be > block_length ({gen_length})"
+    assert args.seq_len >= gen_length, \
+        f"seq_len ({args.seq_len}) must be >= block_length ({gen_length})"
 
     compiled_tag = '_compiled' if args.compile else ''
     print(f"Mode: {args.attention_mode}{compiled_tag} | seq_len={args.seq_len} "
